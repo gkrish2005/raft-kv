@@ -1,0 +1,11 @@
+# ADR 005 — Concurrency Model
+
+**Context:** Need an explicit answer to "what protects what" before any Raft code is written.
+
+**Decision:** Single mutex per node owns all mutable Raft state (`docs/architecture.md`'s ownership table). A **second, distinct mutex** owns the state machine (KV + `RequestTable`, `docs/client-semantics.md`), since it's written by the applier and read by `GET` independently of Raft's own bookkeeping. **Lock ordering is fixed and one-directional: Raft mutex before StateMachine mutex, never the reverse** (`docs/architecture.md`'s Concurrency model). Network I/O never happens under the Raft lock (I-014, no exceptions). Disk I/O (WAL fsync) *does* happen under the Raft lock, as an explicit, intentional MVP tradeoff. A single election-loop goroutine owns the election timer.
+
+**Alternatives considered:** A single combined mutex for both Raft and state-machine state (simpler lock-ordering story — only one lock, so no ordering to get wrong — but forces `GET`'s local KV read to contend with the Raft mutex even when nothing about consensus bookkeeping is actually involved, and makes the applier's Raft-state update and its state-machine `Apply()` call inseparable when they don't need to be). Actor-style message-passing per node (more idiomatic in some Go circles, more complexity for this scope); decoupled async persistence pipeline (rejected for MVP — the ordering guarantees become harder to reason about, and simplicity of the write-path diagram in `docs/architecture.md` was prioritized).
+
+**Trade-offs:** disk-under-lock bounds single-node throughput by disk latency — measured explicitly in Phase 10, not hidden. Two mutexes instead of one reintroduces a lock-ordering discipline that has to be followed correctly (`docs/architecture.md`'s fixed Raft-then-StateMachine order) — a real, accepted cost, in exchange for not serializing `GET`'s KV read behind every piece of Raft bookkeeping.
+
+**Consequences:** `go test -race ./...` is a meaningful, expected-to-pass gate after every phase. The lock-ordering rule is a standing code-review item (`CLAUDE.md` rule 34) precisely because a second lock reintroduces the class of bug a single-mutex design would have avoided — this is a deliberate, accepted trade, not an oversight.

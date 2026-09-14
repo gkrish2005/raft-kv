@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package raftkv.raft.v1;
+
+option go_package = "raftkv/proto/raft/v1;raftv1";
+
+service RaftService {
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
+message RequestVoteRequest {
+  uint64 term = 1;
+  string candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+  string correlation_id = 5;
+}
+
+message RequestVoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+message AppendEntriesRequest {
+  uint64 term = 1;
+  string leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  uint64 leader_commit = 5;
+  string correlation_id = 6;
+}
+
+message AppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+}
+
+message TermVoteRecord {
+  uint64 current_term = 1;
+  string voted_for = 2;
+  uint64 boot_id = 3;
+}

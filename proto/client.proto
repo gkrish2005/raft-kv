@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package raftkv.client.v1;
+
+option go_package = "raftkv/proto/client/v1;clientv1";
+
+service ClientService {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Set(SetRequest) returns (SetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_SUCCESS = 1;
+  STATUS_NOT_LEADER = 2;
+  STATUS_NO_LEADER = 3;
+  STATUS_TIMEOUT = 4;
+  STATUS_INVALID_REQUEST = 5;
+  STATUS_REQUEST_ID_REUSED = 6;
+  STATUS_OVERLOADED = 7;
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  Status status = 1;
+  bytes value = 2;
+  bool found = 3;
+  string error_message = 4;
+  string leader_hint = 5;
+  int64 retry_after_ms = 6;
+}
+
+message SetRequest {
+  string key = 1;
+  bytes value = 2;
+  string request_id = 3;
+}
+
+message SetResponse {
+  Status status = 1;
+  string error_message = 2;
+  string leader_hint = 3;
+  int64 retry_after_ms = 4;
+}
+
+message DeleteRequest {
+  string key = 1;
+  string request_id = 2;
+}
+
+message DeleteResponse {
+  Status status = 1;
+  string error_message = 2;
+  string leader_hint = 3;
+  int64 retry_after_ms = 4;
+}
+
+message NodeStatus {
+  string id = 1;
+  string role = 2;
+  int64 last_contact = 3;
+}
+
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  Status status = 1;
+  string leader_id = 2;
+  uint64 term = 3;
+  repeated NodeStatus nodes = 4;
+  string error_message = 5;
+  string leader_hint = 6;
+  int64 retry_after_ms = 7;
+}
