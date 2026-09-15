@@ -40,6 +40,8 @@ func (n *Node) startElection() {
 	}
 	n.state.role = Candidate
 	n.state.electionTerm = term
+	lastLogIdx := n.lastLogIndexLocked()
+	lastLogTerm := n.lastLogTermLocked()
 	peers := append([]string(nil), n.cfg.Peers...)
 	n.mu.Unlock()
 	votes := 1
@@ -56,7 +58,12 @@ func (n *Node) startElection() {
 	}
 	for _, peer := range peers {
 		ctx, cancel := context.WithTimeout(context.Background(), n.cfg.RPCTimeout)
-		resp, err := n.cfg.Transport.SendRequestVote(ctx, peer, &raftv1.RequestVoteRequest{Term: term, CandidateId: n.cfg.ID})
+		resp, err := n.cfg.Transport.SendRequestVote(ctx, peer, &raftv1.RequestVoteRequest{
+			Term:         term,
+			CandidateId:  n.cfg.ID,
+			LastLogIndex: lastLogIdx,
+			LastLogTerm:  lastLogTerm,
+		})
 		cancel()
 		if err != nil {
 			continue
@@ -78,6 +85,18 @@ func (n *Node) startElection() {
 
 func (n *Node) becomeLeaderLocked() {
 	n.state.role = Leader
+	n.state.nextIndex = make(map[string]uint64)
+	n.state.matchIndex = make(map[string]uint64)
+	n.replicationAttempt = make(map[string]uint64)
+	n.peerInFlight = make(map[string]bool)
+
+	lastIdx := n.lastLogIndexLocked()
+	for _, peer := range n.cfg.Peers {
+		n.state.nextIndex[peer] = lastIdx + 1
+		n.state.matchIndex[peer] = 0
+	}
+	n.state.matchIndex[n.cfg.ID] = lastIdx
+
 	slog.Info("raft leader elected", "node_id", n.cfg.ID, "term", n.state.currentTerm)
 }
 
@@ -95,38 +114,7 @@ func (n *Node) HandleRequestVoteResponse(resp *raftv1.RequestVoteResponse) {
 	n.handleRequestVoteResponseLocked(resp)
 	n.mu.Unlock()
 }
-func (n *Node) sendHeartbeats() {
-	n.mu.Lock()
-	if n.state.role != Leader {
-		n.mu.Unlock()
-		return
-	}
-	term := n.state.currentTerm
-	peers := append([]string(nil), n.cfg.Peers...)
-	n.mu.Unlock()
-	for _, peer := range peers {
-		ctx, cancel := context.WithTimeout(context.Background(), n.cfg.RPCTimeout)
-		resp, err := n.cfg.Transport.SendAppendEntries(ctx, peer, &raftv1.AppendEntriesRequest{Term: term, LeaderId: n.cfg.ID})
-		cancel()
-		if err == nil {
-			n.mu.Lock()
-			n.handleAppendEntriesResponseLocked(resp)
-			n.mu.Unlock()
-		}
-	}
-}
 
-func (n *Node) handleAppendEntriesResponseLocked(resp *raftv1.AppendEntriesResponse) {
-	if resp.Term > n.state.currentTerm {
-		n.stepDownLocked(resp.Term)
-	}
-}
-
-func (n *Node) HandleAppendEntriesResponse(resp *raftv1.AppendEntriesResponse) {
-	n.mu.Lock()
-	n.handleAppendEntriesResponseLocked(resp)
-	n.mu.Unlock()
-}
 func (n *Node) RequestVote(ctx context.Context, req *raftv1.RequestVoteRequest) (*raftv1.RequestVoteResponse, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -137,7 +125,9 @@ func (n *Node) RequestVote(ctx context.Context, req *raftv1.RequestVoteRequest) 
 		return nil, context.Canceled
 	}
 	grant := false
-	upToDate := req.LastLogTerm > n.state.lastLogTerm || (req.LastLogTerm == n.state.lastLogTerm && req.LastLogIndex >= n.state.lastLogIndex)
+	myLastLogIndex := n.lastLogIndexLocked()
+	myLastLogTerm := n.lastLogTermLocked()
+	upToDate := req.LastLogTerm > myLastLogTerm || (req.LastLogTerm == myLastLogTerm && req.LastLogIndex >= myLastLogIndex)
 	if n.state.role != StorageFailed && upToDate && (n.state.votedFor == "" || n.state.votedFor == req.CandidateId) {
 		if n.state.votedFor != req.CandidateId && !n.persistLocked(n.state.currentTerm, req.CandidateId) {
 			return nil, context.Canceled
@@ -149,16 +139,4 @@ func (n *Node) RequestVote(ctx context.Context, req *raftv1.RequestVoteRequest) 
 	}
 	return &raftv1.RequestVoteResponse{Term: n.state.currentTerm, VoteGranted: grant}, nil
 }
-func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesRequest) (*raftv1.AppendEntriesResponse, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if req.Term < n.state.currentTerm {
-		return &raftv1.AppendEntriesResponse{Term: n.state.currentTerm}, nil
-	}
-	if req.Term > n.state.currentTerm && !n.stepDownLocked(req.Term) {
-		return nil, context.Canceled
-	}
-	n.state.role = Follower
-	n.requestElectionTimerReset()
-	return &raftv1.AppendEntriesResponse{Term: n.state.currentTerm, Success: true}, nil
-}
+

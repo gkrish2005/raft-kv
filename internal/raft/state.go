@@ -15,8 +15,9 @@ type nodeState struct {
 	role         Role
 	electionTerm uint64
 	bootID       uint64
-	// Test-only seedable vote-freshness metadata. Production nodes always retain (0, 0)
-	// until Phase 2 introduces a real log; it is never populated from external input.
-	lastLogIndex uint64
-	lastLogTerm  uint64
+	commitIndex  uint64
+	lastApplied  uint64
+	nextIndex    map[string]uint64
+	matchIndex   map[string]uint64
 }
+

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"raftkv/internal/storage"
 	raftv1 "raftkv/proto/raft/v1"
 )
 
@@ -78,7 +79,9 @@ func TestHigherTermAllFourTouchpointsPersistBeforeContinuing(t *testing.T) {
 			_, _ = n.AppendEntries(context.Background(), &raftv1.AppendEntriesRequest{Term: 6, LeaderId: "other"})
 		}},
 		{"request vote response", func(n *Node) { n.HandleRequestVoteResponse(&raftv1.RequestVoteResponse{Term: 6}) }},
-		{"append entries response", func(n *Node) { n.HandleAppendEntriesResponse(&raftv1.AppendEntriesResponse{Term: 6}) }},
+		{"append entries response", func(n *Node) {
+			n.HandleAppendEntriesResponse("peer", &raftv1.AppendEntriesRequest{Term: 5}, &raftv1.AppendEntriesResponse{Term: 6}, 1)
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,8 +222,12 @@ func TestHeartbeatStepsDownCandidate(t *testing.T) {
 
 func TestRequestVoteRejectsStaleLogUsingExactFormula(t *testing.T) {
 	store := &memoryStore{boot: 1}
-	n, _ := NewNode(Config{ID: "n1", Clock: NewFakeClock(time.Unix(0, 0)), Transport: noTransport{}, Store: store})
-	n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1, lastLogTerm: 3, lastLogIndex: 9}
+	logStore := storage.NewInMemoryLogStore()
+	for i := uint64(1); i <= 9; i++ {
+		_ = logStore.Append([]*raftv1.LogEntry{{Index: i, Term: 3}})
+	}
+	n, _ := NewNode(Config{ID: "n1", Clock: NewFakeClock(time.Unix(0, 0)), Transport: noTransport{}, Store: store, LogStore: logStore})
+	n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1}
 	stale, err := n.RequestVote(context.Background(), &raftv1.RequestVoteRequest{Term: 4, CandidateId: "n2", LastLogTerm: 3, LastLogIndex: 8})
 	if err != nil || stale.VoteGranted {
 		t.Fatalf("stale candidate was granted: %#v, %v", stale, err)
