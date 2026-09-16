@@ -138,6 +138,12 @@ func (n *Node) Recover() error {
 	n.state.role = Follower
 	n.state.commitIndex = 0
 	n.state.lastApplied = 0
+	// Reset the LogStore's I-011 committed-truncation barrier to match the volatile state reset.
+	// Without this, a FileLogStore opened across a recovery boundary could retain a stale
+	// committed commitIndex from a previous run and incorrectly block legitimate truncations.
+	if cs, ok := n.cfg.LogStore.(interface{ SetCommitIndex(uint64) }); ok {
+		cs.SetCommitIndex(0)
+	}
 	n.recovered = true
 
 	return nil
@@ -197,6 +203,31 @@ func (n *Node) Stop() {
 }
 func (n *Node) Role() Role   { n.mu.Lock(); defer n.mu.Unlock(); return n.state.role }
 func (n *Node) Term() uint64 { n.mu.Lock(); defer n.mu.Unlock(); return n.state.currentTerm }
+
+// LeaderHint returns the known leader ID under the Raft mutex.
+// If this node is the leader, returns this node's ID. Otherwise returns the last known leader ID (or empty if unknown).
+func (n *Node) LeaderHint() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.state.role == Leader {
+		return n.cfg.ID
+	}
+	return n.state.leaderID
+}
+
+// ClusterView returns a consistent snapshot of (currentTerm, role, leaderHint) under the Raft mutex.
+func (n *Node) ClusterView() (term uint64, role Role, leaderHint string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	term = n.state.currentTerm
+	role = n.state.role
+	if role == Leader {
+		leaderHint = n.cfg.ID
+	} else {
+		leaderHint = n.state.leaderID
+	}
+	return term, role, leaderHint
+}
 
 // notifyLocked signals a notification channel if the node is still running.
 // If the node has been stopped (n.stopped == true), the channel was already

@@ -19,5 +19,6 @@ type nodeState struct {
 	lastApplied  uint64
 	nextIndex    map[string]uint64
 	matchIndex   map[string]uint64
+	leaderID     string
 }
 

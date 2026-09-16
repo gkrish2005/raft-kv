@@ -62,11 +62,18 @@ func TestCLISmoke(t *testing.T) {
 		conn, dialErr := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if dialErr == nil {
 			_ = conn.Close()
-			break
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			statusCmd := exec.CommandContext(ctx, "go", "run", "./cmd/raftkv-cli", "-server", addr, "status")
+			statusCmd.Dir = repoRoot
+			out, err := statusCmd.CombinedOutput()
+			cancel()
+			if err == nil && strings.Contains(string(out), "Leader ID: node-smoke") {
+				break
+			}
 		}
-		<-time.After(25 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 		if time.Now().After(deadline) {
-			t.Fatalf("raftkv-node did not listen on %s: %v\n%s", addr, dialErr, nodeLogs.String())
+			t.Fatalf("raftkv-node did not become leader on %s\n%s", addr, nodeLogs.String())
 		}
 	}
 

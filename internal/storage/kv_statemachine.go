@@ -2,9 +2,16 @@ package storage
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 )
+
+// ErrRequestIDReused is returned when a command arrives with a RequestID that has
+// already been applied, but with a different payload hash (I-017).
+var ErrRequestIDReused = errors.New("request_id reused with different payload")
 
 // OperationType defines the supported state machine operation types.
 type OperationType string
@@ -28,6 +35,13 @@ type CommandResult struct {
 	Value []byte
 }
 
+// AppliedRequest records the outcome and payload hash of an applied client request for deduplication (I-017).
+type AppliedRequest struct {
+	RequestID   string
+	PayloadHash []byte // SHA-256 of CanonicalEncode(cmd)
+	Result      CommandResult
+}
+
 // StateMachine is the core state machine interface.
 //
 // GET is explicitly NOT a Raft log command: Get(key) does not call Apply(),
@@ -45,14 +59,47 @@ type StateMachine interface {
 // particularly across the read-barrier revalidation-to-read sequence (I-016).
 type KVStateMachine struct {
 	sync.RWMutex
-	kv map[string][]byte
+	kv           map[string][]byte
+	requestTable map[string]AppliedRequest
 }
 
 // NewKVStateMachine creates a new initialized KVStateMachine.
 func NewKVStateMachine() *KVStateMachine {
 	return &KVStateMachine{
-		kv: make(map[string][]byte),
+		kv:           make(map[string][]byte),
+		requestTable: make(map[string]AppliedRequest),
 	}
+}
+
+// CanonicalEncode computes the frozen, deterministic binary serialization of a command's
+// identity fields {OperationType, Key, Value} per docs/client-semantics.md.
+// RequestID is deliberately excluded (I-017). Multi-byte integers are encoded in little-endian.
+func CanonicalEncode(cmd Command) []byte {
+	valLen := len(cmd.Value)
+	totalLen := 1 + 1 + len(cmd.OperationType) + 4 + len(cmd.Key) + 4 + valLen
+	buf := make([]byte, totalLen)
+	buf[0] = 1 // version 1
+	buf[1] = byte(len(cmd.OperationType))
+	copy(buf[2:], cmd.OperationType)
+	offset := 2 + len(cmd.OperationType)
+
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(cmd.Key)))
+	offset += 4
+	copy(buf[offset:], cmd.Key)
+	offset += len(cmd.Key)
+
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(valLen))
+	offset += 4
+	if valLen > 0 {
+		copy(buf[offset:], cmd.Value)
+	}
+	return buf
+}
+
+// CommandPayloadHash computes the SHA-256 hash of the canonical encoding of cmd.
+func CommandPayloadHash(cmd Command) []byte {
+	h := sha256.Sum256(CanonicalEncode(cmd))
+	return h[:]
 }
 
 // GetLocked performs a plain local read from in-memory state.
@@ -67,8 +114,42 @@ func (s *KVStateMachine) GetLocked(key string) ([]byte, bool) {
 }
 
 // ApplyLocked executes a state machine command against the in-memory KV store.
+// Dedup check and state machine mutation are performed atomically under s.Lock() (I-017).
 // Caller must hold s.Lock().
 func (s *KVStateMachine) ApplyLocked(cmd Command) (CommandResult, error) {
+	if cmd.OperationType == Noop {
+		// No-op has no KV mutation effect and is never recorded in requestTable (I-023).
+		return CommandResult{}, nil
+	}
+
+	if cmd.RequestID != "" {
+		hash := CommandPayloadHash(cmd)
+		if entry, exists := s.requestTable[cmd.RequestID]; exists {
+			if !bytes.Equal(entry.PayloadHash, hash) {
+				// I-017: duplicate RequestID with different payload.
+				// Application error — does NOT roll back commitIndex or block lastApplied (rule 8 / I-005).
+				return CommandResult{}, ErrRequestIDReused
+			}
+			// Dedup hit — return cached result without re-executing KV mutation.
+			return entry.Result, nil
+		}
+
+		result, err := s.applyOpLocked(cmd)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		s.requestTable[cmd.RequestID] = AppliedRequest{
+			RequestID:   cmd.RequestID,
+			PayloadHash: hash,
+			Result:      result,
+		}
+		return result, nil
+	}
+
+	return s.applyOpLocked(cmd)
+}
+
+func (s *KVStateMachine) applyOpLocked(cmd Command) (CommandResult, error) {
 	switch cmd.OperationType {
 	case Set:
 		s.kv[cmd.Key] = bytes.Clone(cmd.Value)
@@ -76,10 +157,6 @@ func (s *KVStateMachine) ApplyLocked(cmd Command) (CommandResult, error) {
 
 	case Delete:
 		delete(s.kv, cmd.Key)
-		return CommandResult{}, nil
-
-	case Noop:
-		// No-op has no KV mutation effect.
 		return CommandResult{}, nil
 
 	default:

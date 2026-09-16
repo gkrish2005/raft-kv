@@ -41,6 +41,7 @@ func (n *Node) stepDownLocked(term uint64) bool {
 		return false
 	}
 	n.state.role = Follower
+	n.state.leaderID = ""
 	n.state.electionTerm = 0
 	n.leaderNoOpIndex = 0
 	n.leaderNoOpTerm = 0
@@ -59,6 +60,7 @@ func (n *Node) startElection() {
 		return
 	}
 	n.state.role = Candidate
+	n.state.leaderID = ""
 	n.state.electionTerm = term
 	lastLogIdx := n.lastLogIndexLocked()
 	lastLogTerm := n.lastLogTermLocked()
@@ -117,6 +119,7 @@ func (n *Node) becomeLeaderLocked() {
 	}
 
 	n.state.role = Leader
+	n.state.leaderID = ""
 	n.readReadyTerm = 0
 	n.leaderNoOpIndex = 0
 	n.leaderNoOpTerm = 0

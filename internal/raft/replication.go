@@ -204,6 +204,7 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 
 	// Reset election timer and ensure follower role
 	n.state.role = Follower
+	n.state.leaderID = req.LeaderId
 	n.requestElectionTimerReset()
 
 	lastIdx := n.lastLogIndexLocked()
@@ -283,6 +284,12 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 	lastNewEntryIndex := req.PrevLogIndex + uint64(len(req.Entries))
 	if req.LeaderCommit > n.state.commitIndex {
 		n.state.commitIndex = min(req.LeaderCommit, lastNewEntryIndex)
+		// Arm the LogStore's I-011 committed-truncation guard (follower path).
+		// This is the operationally critical site: TruncateFrom is called from step 4 above
+		// during conflict resolution, and must see an up-to-date commitIndex barrier.
+		if cs, ok := n.cfg.LogStore.(interface{ SetCommitIndex(uint64) }); ok {
+			cs.SetCommitIndex(n.state.commitIndex)
+		}
 		n.notifyLocked(&n.commitNotifyCh)
 	}
 

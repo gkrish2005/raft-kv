@@ -27,7 +27,7 @@ applies across all phases.
 | 2 | Replicated Log + Minimal Durable Log | ✅ Approved — 2026-09-15 |
 | 3 | Commit, Apply, and Reads | ✅ Approved — 2026-09-16 |
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
-| 5 | Client Semantics + Replicated Dedup | Not started |
+| **5** | **Client Semantics + Replicated Dedup** | 🔶 **In progress — Pass 2 (Implement)** |
 | 6 | Chaos Testing Framework | Not started |
 | 7 | Observability | Not started |
 | 8 | Evidence-Grounded Incident Diagnosis | Not started |
@@ -89,13 +89,82 @@ path now returns `STATUS_NOT_LEADER` instead of falling back to `s.sm.Get()`.
 Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...`
 green, zero DATA RACE reports (2026-09-16). Tests 1–29, all packages.
 
-> **Note on commit history:** The Phase 4 Pass 4 fix (I-011 `SetCommitIndex` wiring, Tests 28–29, `recovery.go` `TruncateAt` error surfacing) was validated during the 2026-09-16 session, but was committed on 2026-09-17 during Phase 5 preparation, extracted into this standalone commit for bisectability and honest chronology.
+---
+
+## Current Phase (full detail)
+
+### Phase 5 — Client Semantics + Replicated Dedup
+**Status:** Pass 2 (Implement) in progress (Pass 1 approved with developer additions on 2026-09-17)
+
+**Goal:** Close two correctness gaps: (1) duplicate write on leader failover — a local
+per-node dedup cache cannot survive the scenario where a leader commits but crashes before
+ACK-ing; (2) coarse error mapping and missing client redirect contract in the gRPC server.
+
+**Invariants touched:**
+- **I-017 (new invariant):** duplicate `RequestID` + different payload → reject by canonical
+  hash (`STATUS_REQUEST_ID_REUSED` / `ErrRequestIDReused`), never silently resolve.
+- **I-005 (regression-critical):** `lastApplied` advances unconditionally even on application
+  error (`ErrRequestIDReused`). Test 33 serves as explicit proof.
+- **I-016 (regression-critical):** Linearizable reads — Pass 3 audit must include explicit
+  check on `LinearizableGet` error mapping so no error path returns `STATUS_SUCCESS` with
+  unconfirmed data.
+- **I-019 (regression-critical):** Dedup-hit reuse of `resolvePendingWriteLocked` must not alter
+  (RequestID, Index, Term) keying semantics or allow stale write resolution.
+Rules 8 (application errors still applied), 14 (TIMEOUT ≠ failure), 15 (I-017 canonical hash comparison).
+
+**Stated MVP Tradeoff:** Dedup is apply-time only, not append-time — a retried write still
+pays a full replication round before being deduped in `ApplyLocked`.
+
+#### Pass 1 — Design ✅ (approved 2026-09-17)
+
+Full design in artifact `phase5_pass1_design.md`. Summary:
+
+**Group 1 — Canonical command encoding** (`internal/storage/kv_statemachine.go`):
+`CanonicalEncode(cmd Command) []byte` implementing the exact frozen format from
+`docs/client-semantics.md` — `version(u8) | opTypeLen(u8) | opType | keyLen(u32LE) |
+key | valueLen(u32LE) | value`. `RequestID` deliberately excluded. `CommandPayloadHash`
+wraps `SHA-256(CanonicalEncode(cmd))`.
+
+**Group 2 — `RequestTable` in replicated SM** (`internal/storage/kv_statemachine.go`):
+`AppliedRequest{RequestID, PayloadHash, Result}` folded into `KVStateMachine`. Dedup
+logic in `ApplyLocked`: table lookup → hash-compare → dedup hit / `ErrRequestIDReused` /
+fresh apply + table write. `NOOP` never reaches the table. `lastApplied` still advances
+on `ErrRequestIDReused` (application error, not Raft-level rollback — rule 8 / I-005).
+
+**Group 3 — Resource bounds** (`cmd/raftkv-node/main.go`): max key 4 KiB, max value 1 MiB,
+`STATUS_INVALID_REQUEST` on violation before log entry. `STATUS_OVERLOADED` deferred — no
+backpressure signal from Raft layer yet (flagged in Open Questions).
+
+**Group 4 — Result semantics + error mapping** (`cmd/raftkv-node/main.go`): remove busy-
+wait spin-check; add volatile `n.state.leaderID` tracking and `Node.LeaderHint()` accessor;
+map all write/read errors to precise status codes per `docs/client-semantics.md` table.
+`ErrRequestIDReused` mapped at gRPC server handler level only (single path, I-019 safe).
+
+**Group 5 — `ClusterStatus`** (`cmd/raftkv-node/main.go`): replace hardcoded stub with
+live Raft state via new `Node.ClusterView()` accessor.
+
+**Pass 1 Resolutions (approved):**
+- Q1: Proto status codes (`STATUS_REQUEST_ID_REUSED`, `STATUS_TIMEOUT`, `STATUS_NO_LEADER`,
+  `STATUS_OVERLOADED`) already exist in `proto/client/v1` — use as-is.
+- Q2: `n.state.leaderID string` approved — volatile, reset to `""` on election win and step-down.
+- Q3: `ErrRequestIDReused` single-path propagation at gRPC server handler level approved.
+- Q4: Tests 35–36 located in `cmd/raftkv-node/restart_test.go` (Level 4).
+- Test 33 located in new `internal/raft/dedup_test.go` exercising real Raft apply path.
+
+**Tests planned (Tests 30–40):** canonical encoding determinism (30), disambiguation (31),
+dedup same-payload (32), dedup different-payload I-017 + I-005 proof (33 in `dedup_test.go`),
+never-committed retry (34), commit-before-ack-crash exactly-once (35, Level 4 in `restart_test.go`),
+rolling-leader-kill write-survival (36, Level 4 in `restart_test.go`), error mapping — not-leader (37),
+timeout (38), invalid request (39), request-id-reused server mapping (40).
+
+#### Pass 2 — Implement 🔶 (in progress)
+#### Pass 3 — Audit ⬜ (not started)
+#### Pass 4 — Fix ⬜ (not started)
+#### Pass 5 — Verify ⬜ (not started)
 
 ---
 
 ## Upcoming Phases
-
-5. Client Semantics + Replicated Dedup
 6. Chaos Testing Framework
 7. Observability
 8. Evidence-Grounded Incident Diagnosis (Rules + LLM)
@@ -138,6 +207,20 @@ anything under-built on purpose per the "under-build and flag" rule.)*
    least one test exercises the property through the real Raft code path.** Other "yes"
    entries resting solely on isolated storage-layer tests should be re-reviewed in Phase 6.
 
+6. **[Phase 5 — proto status codes resolved]** Four proto status codes
+   (`STATUS_REQUEST_ID_REUSED`, `STATUS_TIMEOUT`, `STATUS_NO_LEADER`, `STATUS_OVERLOADED`)
+   were verified to already exist in `proto/client.proto` and generated Go code; used as-is.
+
+7. **[Phase 7 flag — RequestTable snapshotting correctness gap]** `RequestTable` is not
+   included in the snapshot scope deferred to Phase 7. Phase 7 must explicitly re-verify
+   I-017 once snapshotting exists — a node restoring from a snapshot plus a truncated log
+   tail must not lose dedup history for compacted entries. This is a correctness gap,
+   not just a performance one, and needs to survive five phases without getting lost.
+
+8. **[Phase 10 flag — RequestTable soak test memory tracking]** Noted in `docs/benchmarks.md`
+   methodology that the soak test's memory-growth check should track `RequestTable` size
+   specifically, since it's the one structure in the system designed to grow unbounded by MVP decision.
+
 ---
 
 ## Invariant coverage tracker
@@ -161,7 +244,7 @@ two different things, tracked separately.)*
 | I-013 | 2 | yes | Follower fsync before ACK; delayed-fsync test. |
 | I-014 | 1 | review | RPCs sent after releasing Raft mutex — code-review only, no dedicated test yet. |
 | I-016 | 3 | yes | Full 3-step linearizable read; regression-tested after Phase 4 `server.Get` fix. |
-| I-017 | 5 | no | Phase 5 scope. |
+| I-017 | **5** | pending | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Tests 30–34 (unit) + 35–36 (Level 4 failover). Pending Phase 5 Pass 2. |
 | I-018 | 2 | yes | Fail-closed on durable write failure; disk-before-memory ordering. |
 | I-019 | 3 | yes | Request-identity-aware `PendingWrite` lifecycle. |
 | I-020 | 1, **4** | yes | First-boot persist + full corruption-handling; Tests 10–15, 18–26. |

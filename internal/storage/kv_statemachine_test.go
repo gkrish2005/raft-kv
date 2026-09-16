@@ -224,3 +224,148 @@ func TestKVStateMachine_ExternalLocking(t *testing.T) {
 		t.Fatalf("expected 'v1', got found=%v, val=%s", found, string(val))
 	}
 }
+
+// Test 30: TestCanonicalEncode_Determinism proves that identical semantic commands
+// produce byte-identical CanonicalEncode output and identical SHA-256 hashes across
+// independent constructions, and that RequestID differences do not affect the hash (I-017).
+func TestCanonicalEncode_Determinism(t *testing.T) {
+	cmdA := Command{
+		OperationType: Set,
+		Key:           "test-key-determinism",
+		Value:         []byte("test-value-12345"),
+		RequestID:     "req-A",
+	}
+	cmdB := Command{
+		OperationType: Set,
+		Key:           string([]byte("test-key-determinism")),
+		Value:         bytes.Clone([]byte("test-value-12345")),
+		RequestID:     "req-B", // different RequestID must not alter canonical encoding
+	}
+
+	encA := CanonicalEncode(cmdA)
+	encB := CanonicalEncode(cmdB)
+
+	if !bytes.Equal(encA, encB) {
+		t.Fatalf("CanonicalEncode non-deterministic: %x != %x", encA, encB)
+	}
+
+	hashA := CommandPayloadHash(cmdA)
+	hashB := CommandPayloadHash(cmdB)
+
+	if !bytes.Equal(hashA, hashB) {
+		t.Fatalf("CommandPayloadHash non-deterministic: %x != %x", hashA, hashB)
+	}
+}
+
+// Test 31: TestCanonicalEncode_Disambiguation proves that commands with different
+// fields produce distinct canonical encodings and distinct SHA-256 hashes even if their
+// concatenated raw characters might appear ambiguous without length prefixing (I-017).
+func TestCanonicalEncode_Disambiguation(t *testing.T) {
+	pairs := []struct {
+		name string
+		cmd1 Command
+		cmd2 Command
+	}{
+		{
+			name: "key/value boundary shift",
+			cmd1: Command{OperationType: Set, Key: "ab", Value: []byte("c")},
+			cmd2: Command{OperationType: Set, Key: "a", Value: []byte("bc")},
+		},
+		{
+			name: "operation/key boundary shift",
+			cmd1: Command{OperationType: "SE", Key: "Tkey", Value: []byte("v")},
+			cmd2: Command{OperationType: "SET", Key: "key", Value: []byte("v")},
+		},
+		{
+			name: "SET empty value vs DELETE",
+			cmd1: Command{OperationType: Set, Key: "k", Value: []byte("")},
+			cmd2: Command{OperationType: Delete, Key: "k", Value: nil},
+		},
+	}
+
+	for _, p := range pairs {
+		t.Run(p.name, func(t *testing.T) {
+			enc1 := CanonicalEncode(p.cmd1)
+			enc2 := CanonicalEncode(p.cmd2)
+			if bytes.Equal(enc1, enc2) {
+				t.Fatalf("expected distinct canonical encodings for %s, got identical: %x", p.name, enc1)
+			}
+			hash1 := CommandPayloadHash(p.cmd1)
+			hash2 := CommandPayloadHash(p.cmd2)
+			if bytes.Equal(hash1, hash2) {
+				t.Fatalf("expected distinct hashes for %s, got identical: %x", p.name, hash1)
+			}
+		})
+	}
+}
+
+// Test 32: TestApplyDedup_SamePayload proves that retrying a command with the same
+// RequestID and same payload results in a dedup hit, returning the cached result
+// without re-executing state machine mutation (I-017).
+func TestApplyDedup_SamePayload(t *testing.T) {
+	sm := NewKVStateMachine()
+
+	cmd := Command{
+		OperationType: Set,
+		Key:           "dedup-key",
+		Value:         []byte("val-1"),
+		RequestID:     "req-dedup-1",
+	}
+
+	// 1. First apply: fresh execution
+	res1, err := sm.Apply(cmd)
+	if err != nil {
+		t.Fatalf("first Apply failed: %v", err)
+	}
+
+	val, found := sm.Get("dedup-key")
+	if !found || !bytes.Equal(val, []byte("val-1")) {
+		t.Fatalf("expected 'val-1', got %s", string(val))
+	}
+
+	// Tamper with in-memory KV directly under lock to prove second apply does NOT re-execute
+	sm.Lock()
+	sm.kv["dedup-key"] = []byte("tampered-val")
+	sm.Unlock()
+
+	// 2. Second apply: duplicate RequestID with same payload -> dedup hit
+	res2, err := sm.Apply(cmd)
+	if err != nil {
+		t.Fatalf("second Apply failed: %v", err)
+	}
+	if !bytes.Equal(res1.Value, res2.Value) {
+		t.Fatalf("expected cached result %v, got %v", res1, res2)
+	}
+
+	// Verify KV store was NOT mutated back to "val-1" (dedup hit avoided re-execution)
+	val, found = sm.Get("dedup-key")
+	if !found || !bytes.Equal(val, []byte("tampered-val")) {
+		t.Fatalf("expected 'tampered-val' preserved on dedup hit, got %s", string(val))
+	}
+}
+
+// Test 34: TestApplyDedup_NeverCommitted proves that if an original write was never
+// committed/applied, a retry with the same RequestID is applied fresh (I-017).
+func TestApplyDedup_NeverCommitted(t *testing.T) {
+	sm := NewKVStateMachine()
+
+	// RequestID "req-uncommitted" was never submitted to sm.Apply.
+	// When retry arrives, it must be applied fresh.
+	cmd := Command{
+		OperationType: Set,
+		Key:           "retry-key",
+		Value:         []byte("retry-val"),
+		RequestID:     "req-uncommitted",
+	}
+
+	res, err := sm.Apply(cmd)
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	_ = res
+
+	val, found := sm.Get("retry-key")
+	if !found || !bytes.Equal(val, []byte("retry-val")) {
+		t.Fatalf("expected 'retry-val', got found=%v, val=%s", found, string(val))
+	}
+}

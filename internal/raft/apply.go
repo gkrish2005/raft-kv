@@ -51,7 +51,10 @@ func (n *Node) applierLoop() {
 		}
 
 		n.mu.Lock()
-		n.state.lastApplied = idx // advance strictly AFTER apply (I-009)
+		// I-005 / I-017 / Rule 8: advance strictly AFTER apply (I-009).
+		// Application-level errors (e.g. ErrRequestIDReused) do NOT roll back commitIndex
+		// or prevent lastApplied from advancing monotonically.
+		n.state.lastApplied = idx
 
 		// Wake read barrier waiters waiting for lastApplied >= barrier.CommitIndex
 		n.notifyLocked(&n.applyNotifyCh)

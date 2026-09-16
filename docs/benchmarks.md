@@ -24,5 +24,6 @@ Every category above must state, per measurement, not just once generically:
 - **Storage medium:** disk type (SSD/NVMe/tmpfs/etc.) — fsync latency depends heavily on this
 - **Hardware/environment:** CPU, available RAM, Go version, OS
 - Failure scenarios used, for the performance-under-failure category specifically (which fault, injected how, healed when relative to the measurement window)
+- **Soak test memory tracking:** The soak test's memory-growth check must track `RequestTable` size specifically, since it is the one structure in the system designed to grow unbounded by MVP decision (see `PROGRESS.md` and `docs/adr/009-request-identity-model.md`).
 
 This is a template, not yet filled in — Phase 10 populates it with the values actually used for each measurement, per `docs/phases/phase-10.md`.
