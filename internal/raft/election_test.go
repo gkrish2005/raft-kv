@@ -261,7 +261,7 @@ func TestCrashAfterVoteFsyncBeforeResponsePreservesVote(t *testing.T) {
 	if err := store.Save(8, "n2", 1); err != nil {
 		t.Fatal(err)
 	}
-	restarted, _ := NewNode(Config{ID: "n1", Clock: NewFakeClock(time.Unix(0, 0)), Transport: noTransport{}, Store: store})
+	restarted, _ := NewNode(Config{ID: "n1", Peers: []string{"n2", "n3"}, Clock: NewFakeClock(time.Unix(0, 0)), Transport: noTransport{}, Store: store})
 	if err := restarted.Start(); err != nil {
 		t.Fatal(err)
 	}

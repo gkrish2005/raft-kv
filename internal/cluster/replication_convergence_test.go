@@ -212,12 +212,13 @@ func TestReplicationConvergenceWithFaultInjection(t *testing.T) {
 	// Replicate under fault: node-2 should receive the entries; node-3 will not
 	leader.Replicate()
 
-	// Verify node-2 has received all 3 entries (eventual delivery over transport)
-	waitLastIndex(t, stores["node-2"], 3, 2*time.Second)
+	// Verify node-2 has received all entries:
+	// In Phase 3 (I-023), leader's current-term NOOP occupies index 1, so 3 client writes occupy indices 2-4 (lastIndex=4).
+	waitLastIndex(t, stores["node-2"], 4, 2*time.Second)
 
-	// Verify node-3 is still at index 0 during the fault
-	if stores["node-3"].LastIndex() != 0 {
-		t.Fatalf("expected node-3 lastIndex=0 while partitioned, got %d", stores["node-3"].LastIndex())
+	// Verify node-3 is still at index 1 (received only the pre-partition election NOOP, I-023; none of the 3 partitioned client writes)
+	if stores["node-3"].LastIndex() != 1 {
+		t.Fatalf("expected node-3 lastIndex=1 while partitioned, got %d", stores["node-3"].LastIndex())
 	}
 
 	// STEP 3: HEAL the fault
@@ -230,11 +231,21 @@ func TestReplicationConvergenceWithFaultInjection(t *testing.T) {
 	// STEP 4: Assert eventual convergence of raw logs across all nodes
 	for _, id := range nodeIDs {
 		store := stores[id]
-		waitLastIndex(t, store, 3, 2*time.Second)
+		// In Phase 3 (I-023), leader's current-term NOOP occupies index 1, so 3 client writes occupy indices 2-4 (lastIndex=4).
+		waitLastIndex(t, store, 4, 2*time.Second)
+
+		// Verify NOOP entry at index 1
+		noopEntry, err := store.Get(1)
+		if err != nil {
+			t.Fatalf("node %s failed to get NOOP entry at index 1: %v", id, err)
+		}
+		if noopEntry.Command == nil || noopEntry.Command.OperationType != "NOOP" {
+			t.Fatalf("expected index 1 to be NOOP (I-023), got %+v", noopEntry)
+		}
 
 		expectedEntries := []*raftv1.LogEntry{e1, e2, e3}
 		for i, expected := range expectedEntries {
-			idx := uint64(i + 1)
+			idx := uint64(i + 2) // client entries start at index 2 (after NOOP at index 1, I-023)
 			actual, err := store.Get(idx)
 			if err != nil {
 				t.Fatalf("node %s failed to get entry %d: %v", id, idx, err)

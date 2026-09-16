@@ -133,6 +133,11 @@ func (n *Node) handleAppendEntriesResponseLocked(peer string, req *raftv1.Append
 			n.state.matchIndex[peer] = match
 		}
 		n.state.nextIndex[peer] = n.state.matchIndex[peer] + 1
+
+		// Phase 3 additions: confirmedAttempt, readQuorum notify, commitIndex advance
+		n.confirmedAttempt[peer] = attempt
+		n.notifyLocked(&n.readQuorumNotifyCh)
+		n.tryAdvanceCommitIndexLocked()
 	} else {
 		n.handleAppendEntriesConflictLocked(peer, resp)
 	}
@@ -271,6 +276,14 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 			n.state.role = StorageFailed
 			return nil, fmt.Errorf("append entries failed: %w", err)
 		}
+	}
+
+	// 6. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry) (I-008)
+	// Clamped to lastNewEntryIndex (req.PrevLogIndex + len(req.Entries)), NOT raw local log length.
+	lastNewEntryIndex := req.PrevLogIndex + uint64(len(req.Entries))
+	if req.LeaderCommit > n.state.commitIndex {
+		n.state.commitIndex = min(req.LeaderCommit, lastNewEntryIndex)
+		n.notifyLocked(&n.commitNotifyCh)
 	}
 
 	return &raftv1.AppendEntriesResponse{

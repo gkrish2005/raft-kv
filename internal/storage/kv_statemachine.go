@@ -36,11 +36,15 @@ type CommandResult struct {
 type StateMachine interface {
 	Apply(cmd Command) (result CommandResult, err error)
 	Get(key string) (value []byte, found bool)
+	ApplyLocked(cmd Command) (result CommandResult, err error)
+	GetLocked(key string) (value []byte, found bool)
 }
 
 // KVStateMachine is a thread-safe in-memory key-value state machine.
+// Callers hold the embedded sync.RWMutex externally to synchronize operations,
+// particularly across the read-barrier revalidation-to-read sequence (I-016).
 type KVStateMachine struct {
-	mu sync.RWMutex
+	sync.RWMutex
 	kv map[string][]byte
 }
 
@@ -51,12 +55,10 @@ func NewKVStateMachine() *KVStateMachine {
 	}
 }
 
-// Get performs a plain local read from in-memory state.
+// GetLocked performs a plain local read from in-memory state.
+// Caller must hold s.RLock() or s.Lock().
 // It distinguishes between key not found (found=false) and an empty value (found=true).
-func (s *KVStateMachine) Get(key string) ([]byte, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *KVStateMachine) GetLocked(key string) ([]byte, bool) {
 	val, ok := s.kv[key]
 	if !ok {
 		return nil, false
@@ -64,11 +66,9 @@ func (s *KVStateMachine) Get(key string) ([]byte, bool) {
 	return bytes.Clone(val), true
 }
 
-// Apply executes a state machine command against the in-memory KV store.
-func (s *KVStateMachine) Apply(cmd Command) (CommandResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// ApplyLocked executes a state machine command against the in-memory KV store.
+// Caller must hold s.Lock().
+func (s *KVStateMachine) ApplyLocked(cmd Command) (CommandResult, error) {
 	switch cmd.OperationType {
 	case Set:
 		s.kv[cmd.Key] = bytes.Clone(cmd.Value)
@@ -85,4 +85,18 @@ func (s *KVStateMachine) Apply(cmd Command) (CommandResult, error) {
 	default:
 		return CommandResult{}, fmt.Errorf("unknown operation type: %s", cmd.OperationType)
 	}
+}
+
+// Get performs a plain local read from in-memory state with internal locking.
+func (s *KVStateMachine) Get(key string) ([]byte, bool) {
+	s.RLock()
+	defer s.RUnlock()
+	return s.GetLocked(key)
+}
+
+// Apply executes a state machine command against the in-memory KV store with internal locking.
+func (s *KVStateMachine) Apply(cmd Command) (CommandResult, error) {
+	s.Lock()
+	defer s.Unlock()
+	return s.ApplyLocked(cmd)
 }

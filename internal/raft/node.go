@@ -31,6 +31,7 @@ type Config struct {
 	Transport       Transport
 	Store           storage.TermVoteStore
 	LogStore        storage.LogStore
+	StateMachine    *storage.KVStateMachine
 	ElectionTimeout func() time.Duration
 	RPCTimeout      time.Duration
 }
@@ -39,12 +40,25 @@ type Node struct {
 	mu                 sync.Mutex
 	cfg                Config
 	state              nodeState
+	sm                 *storage.KVStateMachine
+	readReadyTerm      uint64
+	leaderNoOpIndex    uint64
+	leaderNoOpTerm     uint64
+	pendingWrites      map[uint64]*PendingWrite
+	confirmedAttempt   map[string]uint64
+	applierWg          sync.WaitGroup
+	stopped            bool
+	commitNotifyCh     chan struct{}
+	applyNotifyCh      chan struct{}
+	readReadyNotifyCh  chan struct{}
+	readQuorumNotifyCh chan struct{}
 	stop               chan struct{}
 	done               chan struct{}
 	resetTimer         chan time.Duration
 	replicationAttempt map[string]uint64
 	peerInFlight       map[string]bool
 	started            bool
+	recovered          bool
 }
 
 func NewNode(cfg Config) (*Node, error) {
@@ -53,6 +67,9 @@ func NewNode(cfg Config) (*Node, error) {
 	}
 	if cfg.LogStore == nil {
 		cfg.LogStore = storage.NewInMemoryLogStore()
+	}
+	if cfg.StateMachine == nil {
+		cfg.StateMachine = storage.NewKVStateMachine()
 	}
 	if cfg.ElectionTimeout == nil {
 		cfg.ElectionTimeout = func() time.Duration {
@@ -65,43 +82,163 @@ func NewNode(cfg Config) (*Node, error) {
 	return &Node{
 		cfg:                cfg,
 		state:              nodeState{role: Follower},
+		sm:                 cfg.StateMachine,
 		replicationAttempt: make(map[string]uint64),
 		peerInFlight:       make(map[string]bool),
+		confirmedAttempt:   make(map[string]uint64),
+		pendingWrites:      make(map[uint64]*PendingWrite),
+		commitNotifyCh:     make(chan struct{}),
+		applyNotifyCh:      make(chan struct{}),
+		readReadyNotifyCh:  make(chan struct{}),
+		readQuorumNotifyCh: make(chan struct{}),
 	}, nil
 }
+// Recover executes the crash-recovery sequence per docs/architecture.md, I-005, and I-020:
+// 1. Read persisted currentTerm, votedFor, bootID from TermVoteStore.
+// 2. Perform independent semantic validation on votedFor against ID and Peers (defense-in-depth).
+// 3. Replay WAL via LogStore.Recover() to reconstruct log[] and offset map.
+// 4. Reset volatile state: Follower, commitIndex = 0, lastApplied = 0.
+func (n *Node) Recover() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.stopped {
+		return ErrNodeStopped
+	}
+
+	term, vote, boot, err := n.cfg.Store.Load()
+	if err != nil {
+		return fmt.Errorf("term/vote store recovery failed: %w", err)
+	}
+
+	// Defense-in-depth: semantic validation against cluster configuration
+	if vote != "" && vote != n.cfg.ID {
+		validPeer := false
+		for _, p := range n.cfg.Peers {
+			if p == vote {
+				validPeer = true
+				break
+			}
+		}
+		if !validPeer {
+			return fmt.Errorf("recovery failed: term/vote record has unknown votedFor %q", vote)
+		}
+	}
+	n.state.currentTerm = term
+	n.state.votedFor = vote
+	n.state.bootID = boot
+
+	// Replay WAL to reconstruct log[] and LogStore offset map
+	if rec, ok := n.cfg.LogStore.(interface{ Recover() error }); ok {
+		if err := rec.Recover(); err != nil {
+			return fmt.Errorf("log recovery failed: %w", err)
+		}
+	}
+
+	// Volatile state initialization: start as Follower, commitIndex = 0, lastApplied = 0 (I-005)
+	n.state.role = Follower
+	n.state.commitIndex = 0
+	n.state.lastApplied = 0
+	n.recovered = true
+
+	return nil
+}
+
 func (n *Node) Start() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.started {
 		return nil
 	}
-	term, vote, boot, err := n.cfg.Store.Load()
-	if err != nil {
-		return err
+	if !n.recovered {
+		n.mu.Unlock()
+		if err := n.Recover(); err != nil {
+			n.mu.Lock()
+			return err
+		}
+		n.mu.Lock()
 	}
-	n.state.currentTerm, n.state.votedFor, n.state.bootID = term, vote, boot
+
 	n.stop = make(chan struct{})
 	n.done = make(chan struct{})
 	n.resetTimer = make(chan time.Duration, 1)
 	n.started = true
+	n.stopped = false
 	slog.Info("raft node started", "node_id", n.cfg.ID, "role", n.state.role, "term", n.state.currentTerm)
 	go n.electionLoop()
+	n.applierWg.Add(1)
+	go n.applierLoop()
 	return nil
 }
 func (n *Node) Stop() {
 	n.mu.Lock()
-	if !n.started {
+	if !n.started || n.stopped {
 		n.mu.Unlock()
 		return
 	}
-	close(n.stop)
-	done := n.done
+	n.stopped = true
 	n.started = false
+	close(n.stop)
+
+	for idx, pw := range n.pendingWrites {
+		delete(n.pendingWrites, idx)
+		pw.Done <- CommandResult{Err: ErrShutdown}
+	}
+
+	close(n.commitNotifyCh)
+	close(n.applyNotifyCh)
+	close(n.readReadyNotifyCh)
+	close(n.readQuorumNotifyCh)
+
+	done := n.done
 	n.mu.Unlock()
+
 	<-done
+	n.applierWg.Wait()
 }
 func (n *Node) Role() Role   { n.mu.Lock(); defer n.mu.Unlock(); return n.state.role }
 func (n *Node) Term() uint64 { n.mu.Lock(); defer n.mu.Unlock(); return n.state.currentTerm }
+
+// notifyLocked signals a notification channel if the node is still running.
+// If the node has been stopped (n.stopped == true), the channel was already
+// permanently closed by Node.Stop() and must not be double-closed or recreated.
+func (n *Node) notifyLocked(ch *chan struct{}) {
+	if n.stopped {
+		return
+	}
+	close(*ch)
+	*ch = make(chan struct{})
+}
+
+// quorumSizeLocked returns the minimum number of nodes required to form a majority quorum.
+func (n *Node) quorumSizeLocked() int {
+	return (len(n.cfg.Peers)+1)/2 + 1
+}
+
+// StateMachine returns the node's state machine.
+func (n *Node) StateMachine() *storage.KVStateMachine {
+	return n.sm
+}
+
+// CommitIndex returns the current commitIndex (thread-safe).
+func (n *Node) CommitIndex() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.state.commitIndex
+}
+
+// LastApplied returns the current lastApplied (thread-safe).
+func (n *Node) LastApplied() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.state.lastApplied
+}
+
+// ReadReadyTerm returns the current readReadyTerm (thread-safe).
+func (n *Node) ReadReadyTerm() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.readReadyTerm
+}
 func (n *Node) electionLoop() {
 	defer close(n.done)
 	timer := n.cfg.Clock.NewTimer(n.cfg.ElectionTimeout())
@@ -201,11 +338,10 @@ func (n *Node) NextIndex(peer string) uint64 {
 	return n.state.nextIndex[peer]
 }
 
-// AppendLocalEntry appends a command to the leader's local log durably and updates matchIndex[self].
-func (n *Node) AppendLocalEntry(cmd *raftv1.Command) (*raftv1.LogEntry, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
+func (n *Node) appendLocalEntryLocked(cmd *raftv1.Command) (*raftv1.LogEntry, error) {
+	if n.stopped {
+		return nil, ErrNodeStopped
+	}
 	if n.state.role != Leader {
 		return nil, errors.New("cannot append entry: node is not leader")
 	}
@@ -225,6 +361,44 @@ func (n *Node) AppendLocalEntry(cmd *raftv1.Command) (*raftv1.LogEntry, error) {
 
 	// matchIndex[self] == lastLogIndex (I-022)
 	n.state.matchIndex[n.cfg.ID] = newIndex
+	n.tryAdvanceCommitIndexLocked()
 	return entry, nil
+}
+
+// appendLocalEntryWithPendingWrite is the single authoritative helper that appends a command
+// to the leader's log and registers a PendingWrite if cmd is a client write (RequestId != "").
+func (n *Node) appendLocalEntryWithPendingWrite(cmd *raftv1.Command) (*raftv1.LogEntry, *PendingWrite, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.stopped {
+		return nil, nil, ErrNodeStopped
+	}
+
+	entry, err := n.appendLocalEntryLocked(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var pw *PendingWrite
+	// Only register PendingWrite if cmd is a client write (has RequestId).
+	// NOOP commands have RequestId == "" and must never be inserted into
+	// the PendingWrite registry (docs/client-semantics.md).
+	if cmd.RequestId != "" {
+		pw = &PendingWrite{
+			RequestID: cmd.RequestId,
+			Index:     entry.Index,
+			Term:      n.state.currentTerm,
+			Done:      make(chan CommandResult, 1),
+		}
+		n.pendingWrites[entry.Index] = pw
+	}
+	return entry, pw, nil
+}
+
+// AppendLocalEntry appends a command to the leader's local log durably and updates matchIndex[self].
+func (n *Node) AppendLocalEntry(cmd *raftv1.Command) (*raftv1.LogEntry, error) {
+	entry, _, err := n.appendLocalEntryWithPendingWrite(cmd)
+	return entry, err
 }
 

@@ -20,16 +20,36 @@ func (n *Node) stepDownLocked(term uint64) bool {
 	if term <= n.state.currentTerm {
 		return true
 	}
+
+	// Capture outgoing term BEFORE persistLocked overwrites currentTerm
+	outgoingTerm := n.state.currentTerm
+
+	// Fail all PendingWrites from outgoing leadership epoch with ErrLeadershipLost (I-019)
+	for idx, pw := range n.pendingWrites {
+		if pw.Term == outgoingTerm {
+			delete(n.pendingWrites, idx)
+			pw.Done <- CommandResult{Err: ErrLeadershipLost}
+		}
+	}
+
+	// Wake all parked read waiters so they fail fast on leadership change
+	n.notifyLocked(&n.readQuorumNotifyCh)
+	n.notifyLocked(&n.readReadyNotifyCh)
+	n.notifyLocked(&n.applyNotifyCh)
+
 	if !n.persistLocked(term, "") {
 		return false
 	}
 	n.state.role = Follower
 	n.state.electionTerm = 0
+	n.leaderNoOpIndex = 0
+	n.leaderNoOpTerm = 0
+	n.readReadyTerm = 0
 	return true
 }
 func (n *Node) startElection() {
 	n.mu.Lock()
-	if n.state.role == StorageFailed {
+	if n.state.role == StorageFailed || n.stopped {
 		n.mu.Unlock()
 		return
 	}
@@ -43,9 +63,10 @@ func (n *Node) startElection() {
 	lastLogIdx := n.lastLogIndexLocked()
 	lastLogTerm := n.lastLogTermLocked()
 	peers := append([]string(nil), n.cfg.Peers...)
+	quorum := n.quorumSizeLocked()
 	n.mu.Unlock()
+
 	votes := 1
-	quorum := (len(peers)+1)/2 + 1
 	if votes >= quorum {
 		n.mu.Lock()
 		if n.state.role == Candidate && n.state.electionTerm == term {
@@ -84,7 +105,25 @@ func (n *Node) startElection() {
 }
 
 func (n *Node) becomeLeaderLocked() {
+	if n.stopped {
+		return
+	}
+	// docs/architecture.md I-023: all three conditions must hold to skip duplicate NOOP append:
+	// 1. role == Leader
+	// 2. leaderNoOpTerm == currentTerm
+	// 3. leaderNoOpIndex != 0
+	if n.state.role == Leader && n.leaderNoOpTerm == n.state.currentTerm && n.leaderNoOpIndex != 0 {
+		return
+	}
+
 	n.state.role = Leader
+	n.readReadyTerm = 0
+	n.leaderNoOpIndex = 0
+	n.leaderNoOpTerm = 0
+	n.confirmedAttempt = make(map[string]uint64)
+	n.readQuorumNotifyCh = make(chan struct{})
+	n.readReadyNotifyCh = make(chan struct{})
+
 	n.state.nextIndex = make(map[string]uint64)
 	n.state.matchIndex = make(map[string]uint64)
 	n.replicationAttempt = make(map[string]uint64)
@@ -98,6 +137,16 @@ func (n *Node) becomeLeaderLocked() {
 	n.state.matchIndex[n.cfg.ID] = lastIdx
 
 	slog.Info("raft leader elected", "node_id", n.cfg.ID, "term", n.state.currentTerm)
+
+	// Append exactly one NOOP entry for this leader term (I-023).
+	// Calls appendLocalEntryLocked directly under n.mu.
+	// Does NOT register a PendingWrite (cmd has no RequestID).
+	entry, err := n.appendLocalEntryLocked(&raftv1.Command{OperationType: "NOOP"})
+	if err != nil {
+		return // fail-closed; leaderNoOpIndex stays 0
+	}
+	n.leaderNoOpIndex = entry.Index
+	n.leaderNoOpTerm = n.state.currentTerm
 }
 
 // handleRequestVoteResponseLocked handles a higher term before any candidacy filter.

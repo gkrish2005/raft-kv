@@ -20,10 +20,32 @@ type TermVoteStore interface {
 	Load() (term uint64, votedFor string, bootID uint64, err error)
 }
 
-// FileTermVoteStore stores the canonical record at Path.
-type FileTermVoteStore struct{ Path string }
+// SaveHooks defines fault-injection hooks for testing replacement atomicity.
+type SaveHooks struct {
+	AfterTmpWrite func() error // called after writing tmp, before fsync(tmp)
+	AfterTmpFsync func() error // called after fsync(tmp), before rename
+	AfterRename   func() error // called after rename, before dir fsync
+	AfterDirFsync func() error // called after dir fsync
+}
 
-func NewFileTermVoteStore(path string) *FileTermVoteStore { return &FileTermVoteStore{Path: path} }
+// FileTermVoteStore stores the canonical record at Path.
+type FileTermVoteStore struct {
+	Path         string
+	allowedNodes map[string]bool
+	Hooks        SaveHooks
+}
+
+// NewFileTermVoteStore constructs a FileTermVoteStore with configured allowed cluster node IDs.
+func NewFileTermVoteStore(path string, allowedNodes []string) *FileTermVoteStore {
+	m := make(map[string]bool, len(allowedNodes))
+	for _, n := range allowedNodes {
+		m[n] = true
+	}
+	return &FileTermVoteStore{
+		Path:         path,
+		allowedNodes: m,
+	}
+}
 
 func (s *FileTermVoteStore) Save(term uint64, votedFor string, bootID uint64) error {
 	if bootID == 0 {
@@ -50,19 +72,45 @@ func (s *FileTermVoteStore) Save(term uint64, votedFor string, bootID uint64) er
 	if written, err = f.Write(record); err == nil && written != len(record) {
 		err = io.ErrShortWrite
 	}
-	if err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
 	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write term/vote temp file: %w", err)
+	}
+
+	if s.Hooks.AfterTmpWrite != nil {
+		if hookErr := s.Hooks.AfterTmpWrite(); hookErr != nil {
+			_ = f.Close()
+			return hookErr
+		}
+	}
+
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("sync term/vote temp file: %w", err)
 	}
+
+	if s.Hooks.AfterTmpFsync != nil {
+		if hookErr := s.Hooks.AfterTmpFsync(); hookErr != nil {
+			_ = f.Close()
+			return hookErr
+		}
+	}
+
+	closeErr := f.Close()
 	if closeErr != nil {
 		return fmt.Errorf("close term/vote temp file: %w", closeErr)
 	}
+
 	if err := os.Rename(tmp, s.Path); err != nil {
 		return fmt.Errorf("rename term/vote record: %w", err)
 	}
+
+	if s.Hooks.AfterRename != nil {
+		if hookErr := s.Hooks.AfterRename(); hookErr != nil {
+			return hookErr
+		}
+	}
+
 	d, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("open term/vote parent directory: %w", err)
@@ -75,6 +123,13 @@ func (s *FileTermVoteStore) Save(term uint64, votedFor string, bootID uint64) er
 	if closeErr != nil {
 		return fmt.Errorf("close term/vote parent directory: %w", closeErr)
 	}
+
+	if s.Hooks.AfterDirFsync != nil {
+		if hookErr := s.Hooks.AfterDirFsync(); hookErr != nil {
+			return hookErr
+		}
+	}
+
 	return nil
 }
 
@@ -86,6 +141,7 @@ func (s *FileTermVoteStore) Load() (uint64, string, uint64, error) {
 		} else if !errors.Is(tmpErr, os.ErrNotExist) {
 			return 0, "", 0, fmt.Errorf("stat term/vote temp record: %w", tmpErr)
 		}
+		// First boot: synthesize {term: 0, votedFor: "", bootID: 1} and immediately persist
 		if err := s.Save(0, "", 1); err != nil {
 			return 0, "", 0, err
 		}
@@ -111,6 +167,10 @@ func (s *FileTermVoteStore) Load() (uint64, string, uint64, error) {
 	}
 	if record.BootId == 0 {
 		return 0, "", 0, errors.New("term/vote record has zero boot ID")
+	}
+	// Semantic validation: votedFor == "" OR votedFor is one of the configured cluster NodeIDs
+	if record.VotedFor != "" && len(s.allowedNodes) > 0 && !s.allowedNodes[record.VotedFor] {
+		return 0, "", 0, fmt.Errorf("term/vote record votedFor %q not in configured cluster nodes", record.VotedFor)
 	}
 	if err := s.Save(record.CurrentTerm, record.VotedFor, record.BootId+1); err != nil {
 		return 0, "", 0, err

@@ -198,3 +198,29 @@ func TestKVStateMachine_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestKVStateMachine_ExternalLocking(t *testing.T) {
+	sm := NewKVStateMachine()
+
+	// 1. External write lock across ApplyLocked
+	sm.Lock()
+	res, err := sm.ApplyLocked(Command{
+		OperationType: Set,
+		Key:           "k1",
+		Value:         []byte("v1"),
+		RequestID:     "req-ext-1",
+	})
+	sm.Unlock()
+	if err != nil {
+		t.Fatalf("ApplyLocked failed: %v", err)
+	}
+	_ = res
+
+	// 2. External read lock across GetLocked
+	sm.RLock()
+	val, found := sm.GetLocked("k1")
+	sm.RUnlock()
+	if !found || !bytes.Equal(val, []byte("v1")) {
+		t.Fatalf("expected 'v1', got found=%v, val=%s", found, string(val))
+	}
+}

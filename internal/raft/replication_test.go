@@ -300,15 +300,15 @@ func TestLeaderLocalAppendUpdatesMatchIndexSelf(t *testing.T) {
 	leader.becomeLeaderLocked()
 	leader.mu.Unlock()
 
-	if leader.MatchIndex("leader") != 0 {
-		t.Fatalf("expected initial matchIndex[self]=0, got %d", leader.MatchIndex("leader"))
+	if leader.MatchIndex("leader") != 1 {
+		t.Fatalf("expected initial matchIndex[self]=1 (NOOP entry), got %d", leader.MatchIndex("leader"))
 	}
 
 	entry1, err := leader.AppendLocalEntry(&raftv1.Command{OperationType: "SET", Key: "a", Value: []byte("1"), RequestId: "r1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry1.Index != 1 || leader.MatchIndex("leader") != 1 || leaderStore.LastIndex() != 1 {
+	if entry1.Index != 2 || leader.MatchIndex("leader") != 2 || leaderStore.LastIndex() != 2 {
 		t.Fatalf("mismatch after first append: entry=%+v matchIndex=%d lastIndex=%d",
 			entry1, leader.MatchIndex("leader"), leaderStore.LastIndex())
 	}
@@ -317,7 +317,7 @@ func TestLeaderLocalAppendUpdatesMatchIndexSelf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry2.Index != 2 || leader.MatchIndex("leader") != 2 || leaderStore.LastIndex() != 2 {
+	if entry2.Index != 3 || leader.MatchIndex("leader") != 3 || leaderStore.LastIndex() != 3 {
 		t.Fatalf("mismatch after second append: entry=%+v matchIndex=%d lastIndex=%d",
 			entry2, leader.MatchIndex("leader"), leaderStore.LastIndex())
 	}

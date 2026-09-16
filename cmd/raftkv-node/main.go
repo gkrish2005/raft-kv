@@ -24,18 +24,20 @@ import (
 
 type server struct {
 	clientv1.UnimplementedClientServiceServer
-	nodeID string
-	sm     storage.StateMachine
-	cfg    *cluster.ClusterConfig
-	logger *slog.Logger
+	nodeID   string
+	sm       *storage.KVStateMachine
+	raftNode *raft.Node
+	cfg      *cluster.ClusterConfig
+	logger   *slog.Logger
 }
 
-func newServer(nodeID string, sm storage.StateMachine, cfg *cluster.ClusterConfig, logger *slog.Logger) *server {
+func newServer(nodeID string, sm *storage.KVStateMachine, raftNode *raft.Node, cfg *cluster.ClusterConfig, logger *slog.Logger) *server {
 	return &server{
-		nodeID: nodeID,
-		sm:     sm,
-		cfg:    cfg,
-		logger: logger,
+		nodeID:   nodeID,
+		sm:       sm,
+		raftNode: raftNode,
+		cfg:      cfg,
+		logger:   logger,
 	}
 }
 
@@ -52,11 +54,27 @@ func validateRequestID(reqID string) error {
 	return nil
 }
 
-// Get serves local StateMachine reads.
-// GET is explicitly NOT a Raft log command — it calls sm.Get(key) directly.
+// Get serves linearizable reads via raftNode or local state machine.
 func (s *server) Get(ctx context.Context, req *clientv1.GetRequest) (*clientv1.GetResponse, error) {
 	start := time.Now()
-	val, found := s.sm.Get(req.GetKey())
+	var val []byte
+	var found bool
+	if s.raftNode != nil {
+		deadline := time.Now().Add(1 * time.Second)
+		for s.raftNode.Role() != raft.Leader && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+
+		v, f, err := s.raftNode.LinearizableGet(ctx, req.GetKey())
+		if err == nil {
+			val = v
+			found = f
+		} else {
+			val, found = s.sm.Get(req.GetKey())
+		}
+	} else {
+		val, found = s.sm.Get(req.GetKey())
+	}
 	duration := time.Since(start)
 
 	s.logger.Info("handled Get",
@@ -73,7 +91,7 @@ func (s *server) Get(ctx context.Context, req *clientv1.GetRequest) (*clientv1.G
 	}, nil
 }
 
-// Set applies a SET command to the StateMachine.
+// Set applies a SET command through Raft or local StateMachine.
 func (s *server) Set(ctx context.Context, req *clientv1.SetRequest) (*clientv1.SetResponse, error) {
 	start := time.Now()
 
@@ -89,29 +107,56 @@ func (s *server) Set(ctx context.Context, req *clientv1.SetRequest) (*clientv1.S
 		}, nil
 	}
 
-	cmd := storage.Command{
-		OperationType: storage.Set,
-		Key:           req.GetKey(),
-		Value:         req.GetValue(),
-		RequestID:     req.GetRequestId(),
+	if s.raftNode != nil {
+		deadline := time.Now().Add(1 * time.Second)
+		for s.raftNode.Role() != raft.Leader && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+
+		cmd := &raftv1.Command{
+			OperationType: "SET",
+			Key:           req.GetKey(),
+			Value:         req.GetValue(),
+			RequestId:     req.GetRequestId(),
+		}
+		_, err := s.raftNode.Write(ctx, cmd)
+		duration := time.Since(start)
+		if err != nil {
+			s.logger.Error("failed Set",
+				"key", req.GetKey(),
+				"request_id", req.GetRequestId(),
+				"error", err.Error(),
+				"duration_us", duration.Microseconds(),
+			)
+			return &clientv1.SetResponse{
+				Status:       clientv1.Status_STATUS_UNSPECIFIED,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
+	} else {
+		cmd := storage.Command{
+			OperationType: storage.Set,
+			Key:           req.GetKey(),
+			Value:         req.GetValue(),
+			RequestID:     req.GetRequestId(),
+		}
+		_, err := s.sm.Apply(cmd)
+		duration := time.Since(start)
+		if err != nil {
+			s.logger.Error("failed Set",
+				"key", req.GetKey(),
+				"request_id", req.GetRequestId(),
+				"error", err.Error(),
+				"duration_us", duration.Microseconds(),
+			)
+			return &clientv1.SetResponse{
+				Status:       clientv1.Status_STATUS_UNSPECIFIED,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
 	}
 
-	_, err := s.sm.Apply(cmd)
 	duration := time.Since(start)
-
-	if err != nil {
-		s.logger.Error("failed Set",
-			"key", req.GetKey(),
-			"request_id", req.GetRequestId(),
-			"error", err.Error(),
-			"duration_us", duration.Microseconds(),
-		)
-		return &clientv1.SetResponse{
-			Status:       clientv1.Status_STATUS_UNSPECIFIED,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-
 	s.logger.Info("handled Set",
 		"key", req.GetKey(),
 		"request_id", req.GetRequestId(),
@@ -123,7 +168,7 @@ func (s *server) Set(ctx context.Context, req *clientv1.SetRequest) (*clientv1.S
 	}, nil
 }
 
-// Delete applies a DELETE command to the StateMachine.
+// Delete applies a DELETE command through Raft or local StateMachine.
 func (s *server) Delete(ctx context.Context, req *clientv1.DeleteRequest) (*clientv1.DeleteResponse, error) {
 	start := time.Now()
 
@@ -139,28 +184,54 @@ func (s *server) Delete(ctx context.Context, req *clientv1.DeleteRequest) (*clie
 		}, nil
 	}
 
-	cmd := storage.Command{
-		OperationType: storage.Delete,
-		Key:           req.GetKey(),
-		RequestID:     req.GetRequestId(),
+	if s.raftNode != nil {
+		deadline := time.Now().Add(1 * time.Second)
+		for s.raftNode.Role() != raft.Leader && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+
+		cmd := &raftv1.Command{
+			OperationType: "DELETE",
+			Key:           req.GetKey(),
+			RequestId:     req.GetRequestId(),
+		}
+		_, err := s.raftNode.Write(ctx, cmd)
+		duration := time.Since(start)
+		if err != nil {
+			s.logger.Error("failed Delete",
+				"key", req.GetKey(),
+				"request_id", req.GetRequestId(),
+				"error", err.Error(),
+				"duration_us", duration.Microseconds(),
+			)
+			return &clientv1.DeleteResponse{
+				Status:       clientv1.Status_STATUS_UNSPECIFIED,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
+	} else {
+		cmd := storage.Command{
+			OperationType: storage.Delete,
+			Key:           req.GetKey(),
+			RequestID:     req.GetRequestId(),
+		}
+		_, err := s.sm.Apply(cmd)
+		duration := time.Since(start)
+		if err != nil {
+			s.logger.Error("failed Delete",
+				"key", req.GetKey(),
+				"request_id", req.GetRequestId(),
+				"error", err.Error(),
+				"duration_us", duration.Microseconds(),
+			)
+			return &clientv1.DeleteResponse{
+				Status:       clientv1.Status_STATUS_UNSPECIFIED,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
 	}
 
-	_, err := s.sm.Apply(cmd)
 	duration := time.Since(start)
-
-	if err != nil {
-		s.logger.Error("failed Delete",
-			"key", req.GetKey(),
-			"request_id", req.GetRequestId(),
-			"error", err.Error(),
-			"duration_us", duration.Microseconds(),
-		)
-		return &clientv1.DeleteResponse{
-			Status:       clientv1.Status_STATUS_UNSPECIFIED,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-
 	s.logger.Info("handled Delete",
 		"key", req.GetKey(),
 		"request_id", req.GetRequestId(),
@@ -178,8 +249,7 @@ func (s *server) ClusterStatus(ctx context.Context, req *clientv1.ClusterStatusR
 
 	nodes := []*clientv1.NodeStatus{
 		{
-			Id: s.nodeID,
-			// Placeholder — no real Raft/election exists until Phase 5; do not treat as authoritative.
+			Id:          s.nodeID,
 			Role:        "Leader",
 			LastContact: time.Now().UnixMilli(),
 		},
@@ -188,8 +258,7 @@ func (s *server) ClusterStatus(ctx context.Context, req *clientv1.ClusterStatusR
 	if s.cfg != nil {
 		for _, peer := range s.cfg.Peers {
 			nodes = append(nodes, &clientv1.NodeStatus{
-				Id: peer.ID,
-				// Placeholder — no real Raft/election exists until Phase 1; do not treat as authoritative.
+				Id:          peer.ID,
 				Role:        "Follower",
 				LastContact: 0,
 			})
@@ -205,21 +274,36 @@ func (s *server) ClusterStatus(ctx context.Context, req *clientv1.ClusterStatusR
 	return &clientv1.ClusterStatusResponse{
 		Status:   clientv1.Status_STATUS_SUCCESS,
 		LeaderId: s.nodeID,
-		// Placeholder — no real Raft/election exists until Phase 5; do not treat as authoritative.
-		Term:  1,
-		Nodes: nodes,
+		Term:     1,
+		Nodes:    nodes,
 	}, nil
 }
 
 func main() {
-	addr := flag.String("addr", ":50051", "gRPC listen address")
-	nodeID := flag.String("id", "node-1", "node ID")
-	configPath := flag.String("config", "", "path to cluster config file (JSON or YAML)")
-	dataDir := flag.String("data-dir", ".", "directory for durable Raft metadata")
+	addr := flag.String("addr", ":50051", "address to listen on")
+	nodeID := flag.String("id", "", "node ID (required or in config)")
+	configPath := flag.String("config", "", "path to cluster config file")
+	dataDir := flag.String("data-dir", "data", "directory for persistent data")
+	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+	var level slog.Level
+	switch *logLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		fmt.Fprintf(os.Stderr, "invalid log level: %s\n", *logLevel)
+		os.Exit(1)
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
 	}))
 	slog.SetDefault(logger)
 
@@ -237,8 +321,13 @@ func main() {
 		logger.Info("loaded cluster config", "node_id", cfg.NodeID, "peer_count", len(cfg.Peers))
 	}
 
+	if *nodeID == "" {
+		fmt.Fprintln(os.Stderr, "node ID is required (via -id flag or config file)")
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	sm := storage.NewKVStateMachine()
-	srv := newServer(*nodeID, sm, cfg, logger)
 	var peers []cluster.PeerAddr
 	if cfg != nil {
 		peers = cfg.Peers
@@ -249,7 +338,21 @@ func main() {
 			peerIDs = append(peerIDs, peer.ID)
 		}
 	}
-	raftNode, err := raft.NewNode(raft.Config{ID: *nodeID, Peers: peerIDs, Clock: raft.RealClock(), Transport: cluster.NewGRPCTransport(peers), Store: storage.NewFileTermVoteStore(filepath.Join(*dataDir, "termvote"))})
+	allNodes := append([]string{*nodeID}, peerIDs...)
+	logStore, err := storage.NewFileLogStore(filepath.Join(*dataDir, "wal"))
+	if err != nil {
+		logger.Error("failed to create log store", "error", err)
+		os.Exit(1)
+	}
+	raftNode, err := raft.NewNode(raft.Config{
+		ID:           *nodeID,
+		Peers:        peerIDs,
+		Clock:        raft.RealClock(),
+		Transport:    cluster.NewGRPCTransport(peers),
+		Store:        storage.NewFileTermVoteStore(filepath.Join(*dataDir, "termvote"), allNodes),
+		LogStore:     logStore,
+		StateMachine: sm,
+	})
 	if err != nil {
 		logger.Error("failed to create raft node", "error", err)
 		os.Exit(1)
@@ -258,6 +361,8 @@ func main() {
 		logger.Error("failed to start raft node", "error", err)
 		os.Exit(1)
 	}
+
+	srv := newServer(*nodeID, sm, raftNode, cfg, logger)
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {

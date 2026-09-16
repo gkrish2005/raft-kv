@@ -342,3 +342,39 @@ func TestInMemoryLogStoreContract(t *testing.T) {
 		t.Fatalf("expected lastIndex=2, got %d", store.LastIndex())
 	}
 }
+
+// Test 16: Precondition validation for FileLogStore.Append
+func TestFileLogStore_AppendPreconditions(t *testing.T) {
+	TestFileLogStorePreconditions(t)
+}
+
+// Test 17: TruncateFrom edge cases (index=0, index<=commitIndex, index=lastIndex+1 no-op, index>lastIndex+1, valid)
+func TestFileLogStore_TruncateFromEdgeCases(t *testing.T) {
+	TestFileLogStoreTruncateFrom(t)
+}
+
+func TestFileLogStore_RecoverRefreshesState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	store, err := NewFileLogStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.Append(makeEntries(1, 3, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if store.LastIndex() != 3 {
+		t.Fatalf("expected lastIndex=3, got %d", store.LastIndex())
+	}
+
+	if err := store.Recover(); err != nil {
+		t.Fatalf("Recover failed: %v", err)
+	}
+	if store.LastIndex() != 3 {
+		t.Fatalf("expected lastIndex=3 after Recover, got %d", store.LastIndex())
+	}
+}
+
