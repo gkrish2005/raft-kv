@@ -127,6 +127,7 @@ type nodeProcess struct {
 	cancel  context.CancelFunc
 	log     *os.File
 	logPath string
+	stopped bool
 }
 
 func TestMultiProcessLeaderKillAndRestart(t *testing.T) {
@@ -186,9 +187,10 @@ func TestMultiProcessLeaderKillAndRestart(t *testing.T) {
 		return p
 	}
 	stop := func(p *nodeProcess) {
-		if p == nil || p.cmd.ProcessState != nil && p.cmd.ProcessState.Exited() {
+		if p == nil || p.stopped {
 			return
 		}
+		p.stopped = true
 		p.cancel()
 		_ = p.cmd.Wait()
 		_ = p.log.Close()
@@ -251,6 +253,7 @@ func TestMultiProcessLeaderKillAndRestart(t *testing.T) {
 	_ = leader.cmd.Wait()
 	_ = leader.log.Close()
 	leader.cancel()
+	leader.stopped = true
 	newLeader := findLeader(leader.id)
 	if newLeader == nil {
 		t.Fatal("surviving nodes did not elect a replacement leader")

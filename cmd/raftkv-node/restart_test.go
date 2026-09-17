@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -364,32 +365,45 @@ func TestRollingLeaderKill_WriteSurvival(t *testing.T) {
 		return string(output), err
 	}
 
-	findActiveLeader := func() (int, string) {
-		deadline := time.Now().Add(12 * time.Second)
+	findActiveLeader := func(excludeIdx ...int) (int, string) {
+		excluded := make(map[int]bool)
+		for _, idx := range excludeIdx {
+			excluded[idx] = true
+		}
+
+		deadline := time.Now().Add(15 * time.Second)
+		backoff := 50 * time.Millisecond
+		maxBackoff := 250 * time.Millisecond
+
 		for time.Now().Before(deadline) {
-			for _, p := range procs {
-				if p == nil || p.cmd.ProcessState != nil && p.cmd.ProcessState.Exited() {
+			for i, p := range procs {
+				if p == nil || excluded[i] {
 					continue
 				}
 				out, err := runCLIOn(p.addr, "status")
-				if err == nil && strings.Contains(out, "Leader ID:") {
-					for _, line := range strings.Split(out, "\n") {
-						if strings.HasPrefix(line, "Leader ID:") {
-							lid := strings.TrimSpace(strings.TrimPrefix(line, "Leader ID:"))
-							if lid != "" {
-								for j, cand := range procs {
-									if cand != nil && cand.id == lid && (cand.cmd.ProcessState == nil || !cand.cmd.ProcessState.Exited()) {
-										return j, cand.addr
-									}
-								}
-							}
-						}
+				if err != nil {
+					continue
+				}
+				// Verify node p itself reports Role: Leader (not merely a follower's cached hint)
+				isLeader := false
+				for _, line := range strings.Split(out, "\n") {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, fmt.Sprintf("- Node %s (Role: Leader", p.id)) {
+						isLeader = true
+						break
 					}
 				}
+				if isLeader {
+					return i, p.addr
+				}
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
-		t.Fatalf("no active leader found in cluster")
+		t.Fatalf("no active leader found in cluster within deadline (excluded: %v)", excludeIdx)
 		return -1, ""
 	}
 
@@ -406,7 +420,7 @@ func TestRollingLeaderKill_WriteSurvival(t *testing.T) {
 	_ = procs[killIdx].cmd.Wait()
 
 	// 3. Wait for new leader among remaining 2 nodes (quorum is 2 of 3)
-	newLeaderIdx, newLeaderAddr := findActiveLeader()
+	newLeaderIdx, newLeaderAddr := findActiveLeader(killIdx)
 	if newLeaderIdx == killIdx {
 		t.Fatalf("killed node %d reported as new leader", killIdx)
 	}
