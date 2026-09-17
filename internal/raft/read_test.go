@@ -624,3 +624,47 @@ func TestStaleAppendEntriesResponseDoesNotUpdateConfirmedAttempt(t *testing.T) {
 	}
 	n.mu.Unlock()
 }
+
+// Test 17: TestLinearizableGet_PreCancelledContextReturnsError proves that LinearizableGet
+// immediately returns ctx.Err() when invoked with an expired or pre-cancelled context,
+// even on single-node clusters where quorum confirmation and barrier waits are instantaneous (I-016).
+func TestLinearizableGet_PreCancelledContextReturnsError(t *testing.T) {
+	sm := storage.NewKVStateMachine()
+	logStore := storage.NewInMemoryLogStore()
+
+	n, err := NewNode(Config{
+		ID:           "leader",
+		Peers:        nil, // single node
+		Clock:        NewFakeClock(time.Unix(0, 0)),
+		Transport:    &mockTransport{},
+		Store:        &memoryStore{term: 1, boot: 1},
+		LogStore:     logStore,
+		StateMachine: sm,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer n.Stop()
+
+	n.mu.Lock()
+	n.becomeLeaderLocked()
+	n.state.commitIndex = 1
+	n.notifyLocked(&n.commitNotifyCh)
+	n.mu.Unlock()
+
+	for n.ReadReadyTerm() != 1 || n.LastApplied() < 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	val, found, err := n.LinearizableGet(ctx, "k")
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled on pre-cancelled context, got err=%v, val=%v, found=%v", err, val, found)
+	}
+}

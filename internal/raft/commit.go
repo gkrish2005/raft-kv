@@ -88,6 +88,9 @@ type ReadBarrier struct {
 
 // confirmLeadershipQuorum performs quorum leadership confirmation via the replication lane (I-016).
 func (n *Node) confirmLeadershipQuorum(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	n.mu.Lock()
 	if n.stopped {
 		n.mu.Unlock()
@@ -163,6 +166,10 @@ func (n *Node) ConfirmLeadershipQuorum(ctx context.Context) error {
 
 // LinearizableGet performs a quorum-confirmed linearizable read per docs/client-semantics.md (I-016, I-023).
 func (n *Node) LinearizableGet(ctx context.Context, key string) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+
 	// Step 1: Client sends GET to the leader.
 	n.mu.Lock()
 	if n.stopped {
