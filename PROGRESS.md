@@ -27,8 +27,8 @@ applies across all phases.
 | 2 | Replicated Log + Minimal Durable Log | ✅ Approved — 2026-09-15 |
 | 3 | Commit, Apply, and Reads | ✅ Approved — 2026-09-16 |
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
-| **5** | **Client Semantics + Replicated Dedup** | 🔶 **Pass 3 complete — awaiting Pass 5 sign-off** |
-| 6 | Chaos Testing Framework | Not started |
+| 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
+| **6** | **Chaos Testing Framework** | ⬜ Not started |
 | 7 | Observability | Not started |
 | 8 | Evidence-Grounded Incident Diagnosis | Not started |
 | 9 | AI Evaluation | Not started |
@@ -91,98 +91,35 @@ green, zero DATA RACE reports (2026-09-16). Tests 1–29, all packages.
 
 > **Note on commit history:** The Phase 4 Pass 4 fix (I-011 `SetCommitIndex` wiring, Tests 28–29, `recovery.go` `TruncateAt` error surfacing) was validated during the 2026-09-16 session, but was committed on 2026-09-17 during Phase 5 preparation, extracted into standalone commit `be2eb9e` for bisectability and honest chronology.
 
+### Phase 5 — Client Semantics + Replicated Dedup
+**Status:** Approved for next phase (2026-09-17)
+Replicated request-table deduplication in `KVStateMachine` keyed by `RequestID` with `PayloadHash` (`SHA-256` of frozen canonical command encoding, excluding `RequestID`).
+Application-error semantics verified: `ErrRequestIDReused` (I-017) advances `lastApplied` without Raft rollback (I-005, Test 33). Full client-facing error mapping (`STATUS_NOT_LEADER` with `leaderHint`, `STATUS_TIMEOUT`, `STATUS_INVALID_REQUEST`, `STATUS_REQUEST_ID_REUSED`, Tests 37–40) and `ClusterStatus` dynamic status RPC.
+Level-4 crash tests: commit-before-ack-crash exactly-once (Test 35) and rolling-leader-kill write survival (Test 36) with robust leader-polling test harness.
+**Pass 2 rework / Pass 3 fix (I-016):** `ctx.Err()` enforcement at entry of `LinearizableGet` and `confirmLeadershipQuorum` ensuring timeout errors on single-node or instant-quorum reads (Test 41).
+Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...` green across all 41 tests (2026-09-17).
+
 ---
 
 ## Current Phase (full detail)
 
-### Phase 5 — Client Semantics + Replicated Dedup
-**Status:** Pass 3 (Audit) complete, awaiting Pass 5 sign-off (Pass 1 approved with developer additions on 2026-09-17)
+### Phase 6 — Chaos Testing Framework
+**Status:** Pass 1 (Design) not started
 
-**Goal:** Close two correctness gaps: (1) duplicate write on leader failover — a local
-per-node dedup cache cannot survive the scenario where a leader commits but crashes before
-ACK-ing; (2) coarse error mapping and missing client redirect contract in the gRPC server.
+**Goal:** Build fault-injection at Levels 3–5 (`docs/testing.md`) and demonstrate, through deterministic and chaos testing, that everything from Phases 1–5 survives real chaos, including combinations and randomization, with precisely-defined convergence criteria (commitIndex + applied prefix + KV + RequestTable across healed nodes).
 
 **Invariants touched:**
-- **I-017 (new invariant):** duplicate `RequestID` + different payload → reject by canonical
-  hash (`STATUS_REQUEST_ID_REUSED` / `ErrRequestIDReused`), never silently resolve.
-- **I-005 (regression-critical):** `lastApplied` advances unconditionally even on application
-  error (`ErrRequestIDReused`). Test 33 serves as explicit proof.
-- **I-016 (regression-critical):** Linearizable reads — Pass 3 audit must include explicit
-  check on `LinearizableGet` error mapping so no error path returns `STATUS_SUCCESS` with
-  unconfirmed data.
-- **I-019 (regression-critical):** Dedup-hit reuse of `resolvePendingWriteLocked` must not alter
-  (RequestID, Index, Term) keying semantics or allow stale write resolution.
-Rules 8 (application errors still applied), 14 (TIMEOUT ≠ failure), 15 (I-017 canonical hash comparison).
+- Safety under partitions, churn, and delayed transport across all applicable invariants (`I-001` through `I-024`).
 
-**Stated MVP Tradeoff:** Dedup is apply-time only, not append-time — a retried write still
-pays a full replication round before being deduped in `ApplyLocked`.
-
-#### Pass 1 — Design ✅ (approved 2026-09-17)
-
-Full design in artifact `phase5_pass1_design.md`. Summary:
-
-**Group 1 — Canonical command encoding** (`internal/storage/kv_statemachine.go`):
-`CanonicalEncode(cmd Command) []byte` implementing the exact frozen format from
-`docs/client-semantics.md` — `version(u8) | opTypeLen(u8) | opType | keyLen(u32LE) |
-key | valueLen(u32LE) | value`. `RequestID` deliberately excluded. `CommandPayloadHash`
-wraps `SHA-256(CanonicalEncode(cmd))`.
-
-**Group 2 — `RequestTable` in replicated SM** (`internal/storage/kv_statemachine.go`):
-`AppliedRequest{RequestID, PayloadHash, Result}` folded into `KVStateMachine`. Dedup
-logic in `ApplyLocked`: table lookup → hash-compare → dedup hit / `ErrRequestIDReused` /
-fresh apply + table write. `NOOP` never reaches the table. `lastApplied` still advances
-on `ErrRequestIDReused` (application error, not Raft-level rollback — rule 8 / I-005).
-
-**Group 3 — Resource bounds** (`cmd/raftkv-node/main.go`): max key 4 KiB, max value 1 MiB,
-`STATUS_INVALID_REQUEST` on violation before log entry. `STATUS_OVERLOADED` deferred — no
-backpressure signal from Raft layer yet (flagged in Open Questions).
-
-**Group 4 — Result semantics + error mapping** (`cmd/raftkv-node/main.go`): remove busy-
-wait spin-check; add volatile `n.state.leaderID` tracking and `Node.LeaderHint()` accessor;
-map all write/read errors to precise status codes per `docs/client-semantics.md` table.
-`ErrRequestIDReused` mapped at gRPC server handler level only (single path, I-019 safe).
-
-**Group 5 — `ClusterStatus`** (`cmd/raftkv-node/main.go`): replace hardcoded stub with
-live Raft state via new `Node.ClusterView()` accessor.
-
-**Pass 1 Resolutions (approved):**
-- Q1: Proto status codes (`STATUS_REQUEST_ID_REUSED`, `STATUS_TIMEOUT`, `STATUS_NO_LEADER`,
-  `STATUS_OVERLOADED`) already exist in `proto/client/v1` — use as-is.
-- Q2: `n.state.leaderID string` approved — volatile, reset to `""` on election win and step-down.
-- Q3: `ErrRequestIDReused` single-path propagation at gRPC server handler level approved.
-- Q4: Tests 35–36 located in `cmd/raftkv-node/restart_test.go` (Level 4).
-- Test 33 located in new `internal/raft/dedup_test.go` exercising real Raft apply path.
-
-**Tests planned / implemented (Tests 30–41):** canonical encoding determinism (30), disambiguation (31),
-dedup same-payload (32), dedup different-payload I-017 + I-005 proof (33 in `dedup_test.go`),
-never-committed retry (34), commit-before-ack-crash exactly-once (35, Level 4 in `restart_test.go`),
-rolling-leader-kill write-survival (36, Level 4 in `restart_test.go`), error mapping — not-leader (37),
-timeout (38), invalid request (39), request-id-reused server mapping (40),
-linearizable read pre-cancelled context (41 in `read_test.go`).
-
-#### Pass 2 — Implement ✅ (complete)
-- Implemented canonical command encoding (`CanonicalEncode`, `CommandPayloadHash` with SHA-256) per frozen wire format.
-- Implemented `requestTable` dedup cache in replicated `KVStateMachine` with `ErrRequestIDReused` (I-017).
-- Implemented resource bounds (max key 4 KiB, max value 1 MiB) with `STATUS_INVALID_REQUEST`.
-- Implemented `LinearizableGet` error mapping and `ClusterStatus` dynamic leader view.
-- Added Tests 30–40 across unit, Raft, and Level-4 integration test suites.
-- **Pass 2 Rework (pre-Pass 3 audit):**
-  - Correctness fix for I-016: added `ctx.Err()` check to `LinearizableGet` and `confirmLeadershipQuorum` in `internal/raft/commit.go` ensuring pre-cancelled or timed-out requests return `STATUS_TIMEOUT` on single-node clusters where quorum confirmation and NOOP application don't block. Regression test added (Test 41 in `read_test.go`).
-  - Level 4 test-harness fixes: replaced flawed `os.ProcessState.Exited()` liveness checks (which return false for `SIGKILL`'d processes) with explicit `killIdx` exclusion and bounded polling with backoff in `restart_test.go` (`TestRollingLeaderKill_WriteSurvival`), and explicit `stopped` boolean flag in `main_test.go`.
-  - Binary hygiene: untracked `raftkv-node` binary and added `/raftkv-node` to `.gitignore`.
-
-#### Pass 3 — Audit ✅ (complete)
-- Audited implementation against invariants I-017, I-005, I-016, I-019, and AGENTS.md Rules 8, 14, 15, 34.
-- Verified all 41 tests passing; `go test -count=1 ./...` and `go test -race -count=1 ./...` green across all packages.
-- Zero invariant violations found.
-
-#### Pass 4 — Fix ⬜ (not needed — no audit findings)
-#### Pass 5 — Verify ⬜ (ready for developer sign-off)
+#### Pass 1 — Design ⬜ (not started)
+#### Pass 2 — Implement ⬜ (not started)
+#### Pass 3 — Audit ⬜ (not started)
+#### Pass 4 — Fix ⬜ (not started)
+#### Pass 5 — Verify ⬜ (not started)
 
 ---
 
 ## Upcoming Phases
-6. Chaos Testing Framework
 7. Observability
 8. Evidence-Grounded Incident Diagnosis (Rules + LLM)
 9. AI Evaluation
@@ -261,7 +198,7 @@ two different things, tracked separately.)*
 | I-013 | 2 | yes | Follower fsync before ACK; delayed-fsync test. |
 | I-014 | 1 | review | RPCs sent after releasing Raft mutex — code-review only, no dedicated test yet. |
 | I-016 | 3 | yes | Full 3-step linearizable read; regression-tested after Phase 4 `server.Get` fix. |
-| I-017 | **5** | pending | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Tests 30–34 (unit) + 35–36 (Level 4 failover). Pending Phase 5 Pass 2. |
+| I-017 | **5** | yes | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Real Raft code-path proof: Test 33 (`dedup_test.go`, real Raft apply loop) and Tests 35–36 (Level 4 subprocess tests). Unit: Tests 30–32, 34. |
 | I-018 | 2 | yes | Fail-closed on durable write failure; disk-before-memory ordering. |
 | I-019 | 3 | yes | Request-identity-aware `PendingWrite` lifecycle. |
 | I-020 | 1, **4** | yes | First-boot persist + full corruption-handling; Tests 10–15, 18–26. |
