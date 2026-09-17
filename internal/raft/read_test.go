@@ -625,7 +625,7 @@ func TestStaleAppendEntriesResponseDoesNotUpdateConfirmedAttempt(t *testing.T) {
 	n.mu.Unlock()
 }
 
-// Test 17: TestLinearizableGet_PreCancelledContextReturnsError proves that LinearizableGet
+// Test 41: TestLinearizableGet_PreCancelledContextReturnsError proves that LinearizableGet
 // immediately returns ctx.Err() when invoked with an expired or pre-cancelled context,
 // even on single-node clusters where quorum confirmation and barrier waits are instantaneous (I-016).
 func TestLinearizableGet_PreCancelledContextReturnsError(t *testing.T) {

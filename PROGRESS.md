@@ -27,7 +27,7 @@ applies across all phases.
 | 2 | Replicated Log + Minimal Durable Log | ✅ Approved — 2026-09-15 |
 | 3 | Commit, Apply, and Reads | ✅ Approved — 2026-09-16 |
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
-| **5** | **Client Semantics + Replicated Dedup** | 🔶 **In progress — Pass 2 (Implement)** |
+| **5** | **Client Semantics + Replicated Dedup** | 🔶 **Pass 3 complete — awaiting Pass 5 sign-off** |
 | 6 | Chaos Testing Framework | Not started |
 | 7 | Observability | Not started |
 | 8 | Evidence-Grounded Incident Diagnosis | Not started |
@@ -89,12 +89,14 @@ path now returns `STATUS_NOT_LEADER` instead of falling back to `s.sm.Get()`.
 Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...`
 green, zero DATA RACE reports (2026-09-16). Tests 1–29, all packages.
 
+> **Note on commit history:** The Phase 4 Pass 4 fix (I-011 `SetCommitIndex` wiring, Tests 28–29, `recovery.go` `TruncateAt` error surfacing) was validated during the 2026-09-16 session, but was committed on 2026-09-17 during Phase 5 preparation, extracted into standalone commit `be2eb9e` for bisectability and honest chronology.
+
 ---
 
 ## Current Phase (full detail)
 
 ### Phase 5 — Client Semantics + Replicated Dedup
-**Status:** Pass 2 (Implement) in progress (Pass 1 approved with developer additions on 2026-09-17)
+**Status:** Pass 3 (Audit) complete, awaiting Pass 5 sign-off (Pass 1 approved with developer additions on 2026-09-17)
 
 **Goal:** Close two correctness gaps: (1) duplicate write on leader failover — a local
 per-node dedup cache cannot survive the scenario where a leader commits but crashes before
@@ -151,16 +153,31 @@ live Raft state via new `Node.ClusterView()` accessor.
 - Q4: Tests 35–36 located in `cmd/raftkv-node/restart_test.go` (Level 4).
 - Test 33 located in new `internal/raft/dedup_test.go` exercising real Raft apply path.
 
-**Tests planned (Tests 30–40):** canonical encoding determinism (30), disambiguation (31),
+**Tests planned / implemented (Tests 30–41):** canonical encoding determinism (30), disambiguation (31),
 dedup same-payload (32), dedup different-payload I-017 + I-005 proof (33 in `dedup_test.go`),
 never-committed retry (34), commit-before-ack-crash exactly-once (35, Level 4 in `restart_test.go`),
 rolling-leader-kill write-survival (36, Level 4 in `restart_test.go`), error mapping — not-leader (37),
-timeout (38), invalid request (39), request-id-reused server mapping (40).
+timeout (38), invalid request (39), request-id-reused server mapping (40),
+linearizable read pre-cancelled context (41 in `read_test.go`).
 
-#### Pass 2 — Implement 🔶 (in progress)
-#### Pass 3 — Audit ⬜ (not started)
-#### Pass 4 — Fix ⬜ (not started)
-#### Pass 5 — Verify ⬜ (not started)
+#### Pass 2 — Implement ✅ (complete)
+- Implemented canonical command encoding (`CanonicalEncode`, `CommandPayloadHash` with SHA-256) per frozen wire format.
+- Implemented `requestTable` dedup cache in replicated `KVStateMachine` with `ErrRequestIDReused` (I-017).
+- Implemented resource bounds (max key 4 KiB, max value 1 MiB) with `STATUS_INVALID_REQUEST`.
+- Implemented `LinearizableGet` error mapping and `ClusterStatus` dynamic leader view.
+- Added Tests 30–40 across unit, Raft, and Level-4 integration test suites.
+- **Pass 2 Rework (pre-Pass 3 audit):**
+  - Correctness fix for I-016: added `ctx.Err()` check to `LinearizableGet` and `confirmLeadershipQuorum` in `internal/raft/commit.go` ensuring pre-cancelled or timed-out requests return `STATUS_TIMEOUT` on single-node clusters where quorum confirmation and NOOP application don't block. Regression test added (Test 41 in `read_test.go`).
+  - Level 4 test-harness fixes: replaced flawed `os.ProcessState.Exited()` liveness checks (which return false for `SIGKILL`'d processes) with explicit `killIdx` exclusion and bounded polling with backoff in `restart_test.go` (`TestRollingLeaderKill_WriteSurvival`), and explicit `stopped` boolean flag in `main_test.go`.
+  - Binary hygiene: untracked `raftkv-node` binary and added `/raftkv-node` to `.gitignore`.
+
+#### Pass 3 — Audit ✅ (complete)
+- Audited implementation against invariants I-017, I-005, I-016, I-019, and AGENTS.md Rules 8, 14, 15, 34.
+- Verified all 41 tests passing; `go test -count=1 ./...` and `go test -race -count=1 ./...` green across all packages.
+- Zero invariant violations found.
+
+#### Pass 4 — Fix ⬜ (not needed — no audit findings)
+#### Pass 5 — Verify ⬜ (ready for developer sign-off)
 
 ---
 
