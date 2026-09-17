@@ -53,6 +53,11 @@ func (n *Node) tryAdvanceCommitIndexLocked() {
 		}
 		if count >= n.quorumSizeLocked() {
 			n.state.commitIndex = N
+			// Arm the LogStore's I-011 committed-truncation guard so TruncateFrom
+			// rejects any attempt to truncate committed entries (leader path).
+			if cs, ok := n.cfg.LogStore.(interface{ SetCommitIndex(uint64) }); ok {
+				cs.SetCommitIndex(N)
+			}
 			n.notifyLocked(&n.commitNotifyCh)
 			return
 		}

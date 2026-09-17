@@ -27,8 +27,10 @@ func ReconstructLog(wal WAL) (map[uint64]*raftv1.LogEntry, map[uint64]int64, uin
 	for _, r := range replayed {
 		entry := r.Record.GetEntry()
 		if entry == nil || entry.Index != expectedIndex {
-			// Gap or invalid index detected: truncate WAL at this record's offset and terminate scan
-			_ = wal.TruncateAt(r.Offset)
+			// Gap or invalid index detected: truncate WAL at this record's offset and terminate scan.
+			if err := wal.TruncateAt(r.Offset); err != nil {
+				return entries, offsets, lastIndex, fmt.Errorf("truncate gap at offset %d during log reconstruction: %w", r.Offset, err)
+			}
 			break
 		}
 		entries[entry.Index] = proto.Clone(entry).(*raftv1.LogEntry)
