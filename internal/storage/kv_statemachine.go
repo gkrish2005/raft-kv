@@ -177,3 +177,30 @@ func (s *KVStateMachine) Apply(cmd Command) (CommandResult, error) {
 	defer s.Unlock()
 	return s.ApplyLocked(cmd)
 }
+
+// KVSnapshot returns a point-in-time copy of all key-value pairs under RLock.
+func (s *KVStateMachine) KVSnapshot() map[string][]byte {
+	s.RLock()
+	defer s.RUnlock()
+	snap := make(map[string][]byte, len(s.kv))
+	for k, v := range s.kv {
+		snap[k] = bytes.Clone(v)
+	}
+	return snap
+}
+
+// RequestTableSnapshot returns a point-in-time copy of the replicated RequestTable under RLock.
+func (s *KVStateMachine) RequestTableSnapshot() map[string]AppliedRequest {
+	s.RLock()
+	defer s.RUnlock()
+	snap := make(map[string]AppliedRequest, len(s.requestTable))
+	for k, v := range s.requestTable {
+		snap[k] = AppliedRequest{
+			RequestID:   v.RequestID,
+			PayloadHash: bytes.Clone(v.PayloadHash),
+			Result:      v.Result,
+		}
+	}
+	return snap
+}
+

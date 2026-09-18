@@ -203,6 +203,7 @@ func (n *Node) Stop() {
 }
 func (n *Node) Role() Role   { n.mu.Lock(); defer n.mu.Unlock(); return n.state.role }
 func (n *Node) Term() uint64 { n.mu.Lock(); defer n.mu.Unlock(); return n.state.currentTerm }
+func (n *Node) BootID() uint64 { n.mu.Lock(); defer n.mu.Unlock(); return n.state.bootID }
 
 // LeaderHint returns the known leader ID under the Raft mutex.
 // If this node is the leader, returns this node's ID. Otherwise returns the last known leader ID (or empty if unknown).
@@ -248,6 +249,11 @@ func (n *Node) quorumSizeLocked() int {
 // StateMachine returns the node's state machine.
 func (n *Node) StateMachine() *storage.KVStateMachine {
 	return n.sm
+}
+
+// LogStore returns the node's underlying log store.
+func (n *Node) LogStore() storage.LogStore {
+	return n.cfg.LogStore
 }
 
 // CommitIndex returns the current commitIndex (thread-safe).

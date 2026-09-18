@@ -28,8 +28,8 @@ applies across all phases.
 | 3 | Commit, Apply, and Reads | ✅ Approved — 2026-09-16 |
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
 | 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
-| **6** | **Chaos Testing Framework** | ⬜ Not started |
-| 7 | Observability | Not started |
+| 6 | Chaos Testing Framework | ✅ Approved for next phase (2026-09-18) |
+| **7** | **Observability** | In progress (Pass 1 Design) |
 | 8 | Evidence-Grounded Incident Diagnosis | Not started |
 | 9 | AI Evaluation | Not started |
 | 10 | Benchmarking, Hardening & Final Demo | Not started |
@@ -99,23 +99,32 @@ Level-4 crash tests: commit-before-ack-crash exactly-once (Test 35) and rolling-
 **Pass 2 rework / Pass 3 fix (I-016):** `ctx.Err()` enforcement at entry of `LinearizableGet` and `confirmLeadershipQuorum` ensuring timeout errors on single-node or instant-quorum reads (Test 41).
 Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...` green across all 41 tests (2026-09-17).
 
+### Phase 6 — Chaos Testing Framework
+**Status:** Approved for next phase (2026-09-18)
+Built fault-injection at Levels 3–5 (`docs/testing.md`) with 11 named deterministic chaos scenarios, `FaultTransport` supporting 5 discrete calibrated regimes (CleanSlow, TimeoutSlow, FullPartition, LightDrop, NodeChurn) with quorum-safety guard, 5-point post-heal state convergence engine (quiescence barrier, CommitIndex/LastApplied equality, entry-by-entry prefix comparison, KV state snapshot equality, RequestTable equality), and randomized `Fuzzer` with periodic quiescent intervals.
+Real ungraceful crash tests (Tests 51 and 52) run on `ProcessCluster` using real subprocesses and `SIGKILL`, proving rolling crash survival (I-024) and fail-closed corrupt startup with on-disk state repair (I-020). Concurrent network I/O probe verified I-014.
+**Pass 3/4 fixes:** Async-dispatch scoped to finite delay with `delayedCancel` in `HealAll()`; `IssueSyncWrite` refactored to wait strictly on `PendingWrite.Done`; `FindLeader` and `WaitForLeader` updated to track live leader by term; dynamic final leader commit snapshot in `AssertConvergence`; synchronous barrier write in periodic quiescence; semantic polling for stable read-ready cluster leader post-heal; stopped node RPC isolation.
+Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in repo (2026-09-18).
+
 ---
 
 ## Current Phase (full detail)
 
-### Phase 6 — Chaos Testing Framework
-**Status:** Pass 1 (Design) not started
+### Phase 7 — Observability
+**Status:** In progress (Pass 1 Design) (2026-09-18)
 
-**Goal:** Build fault-injection at Levels 3–5 (`docs/testing.md`) and demonstrate, through deterministic and chaos testing, that everything from Phases 1–5 survives real chaos, including combinations and randomization, with precisely-defined convergence criteria (commitIndex + applied prefix + KV + RequestTable across healed nodes).
+**Goal:** Turn chaos into structured, machine-readable telemetry per the exact `ClusterEvent`/`MetricSnapshot` schema and event-coverage matrix in `docs/architecture.md` — the foundation the AI layer (Phase 8) depends on — with an explicit failure policy so observability can never affect Raft correctness.
 
 **Invariants touched:**
-- Safety under partitions, churn, and delayed transport across all applicable invariants (`I-001` through `I-024`).
+- `I-015`: Strong architectural boundary between Raft/consensus and AI/observability (enforced by one-way `EventSink` interface; `internal/observability` has zero imports of concrete `internal/raft`/`storage`/`cluster` types).
+- `I-020`: `BootID`-gated startup; no events may be emitted until `BootID` is durably persisted via `TermVoteStore`.
+- `I-014` / Rule 32: Observability must never block or break Raft correctness; failed emissions are dropped and metric-counted; `/metrics` scrape endpoint must never acquire the Raft mutex.
+- Rule 23: `internal/ai` never imports Raft/storage/cluster; `internal/observability` depends only on `EventSink` interface.
+- Rule 24: AI/observability path is fully asynchronous and read-only.
+- Rule 37: `ClusterEvent.Sequence` is in-memory only per boot and resets on restart. Cross-restart identity comes from `BootID`.
 
-#### Pass 1 — Design ⬜ (not started)
-#### Pass 2 — Implement ⬜ (not started)
-#### Pass 3 — Audit ⬜ (not started)
-#### Pass 4 — Fix ⬜ (not started)
-#### Pass 5 — Verify ⬜ (not started)
+#### Pass 1 — Design (In progress)
+- Under review: see Pass 1 Design report.
 
 ---
 
@@ -175,6 +184,17 @@ anything under-built on purpose per the "under-build and flag" rule.)*
    methodology that the soak test's memory-growth check should track `RequestTable` size
    specifically, since it's the one structure in the system designed to grow unbounded by MVP decision.
 
+9. **[Phase 10 flag — Production Write() commit-latency heartbeat floor]** In production
+   `Node.Write(ctx, cmd)`, local WAL append does not immediately dispatch `AppendEntries` to
+   followers; replication is driven by the leader's background heartbeat loop
+   (`HeartbeatInterval = 50ms`). This introduces a worst-case ~50ms latency floor on committed
+   client writes. Noted for Phase 10 commit-latency benchmarking; an immediate-dispatch
+   trigger on write can be benchmarked as an optimization in Phase 10.
+
+10. **[Phase 6 flag — Fuzzer Substrate & CI Duration Calibration]**
+    - **Substrate split**: The randomized fuzzer (`TestFuzzer_SeededRun` and `raftkv-chaos -scenario=fuzzer`) operates on `InProcessCluster` using `FaultTransport` to dynamically inject transport-level faults (drop rates, latency jitter, partition matrices) without external proxies. In this substrate, `NodeChurn` is simulated via `Node.Stop()` and transport unregistration, rather than OS `SIGKILL`. Real ungraceful crash recovery (Level 4/5 `ProcessCluster` with real `raftkv-node` subprocesses, `syscall.SIGKILL`, and on-disk recovery) is provided specifically by `TestScenarioRollingCrash_10x` (Test 51) and `TestScenarioProcessCrashRecovery_10x` (Test 52).
+    - **CI duration calibration**: `TestFuzzer_SeededRun` was intentionally calibrated to 8s active fault injection (~10.05s total wall-clock with cycle quiescence and convergence check) rather than Pass 1's preliminary 60s design estimate, keeping total repository CI runtime under ~2 minutes with race detection enabled while still validating all 5 fault regimes; long-running multi-minute and 30-minute soaks are driven via the standalone CLI (`raftkv-chaos -duration=30m`).
+
 ---
 
 ## Invariant coverage tracker
@@ -196,13 +216,13 @@ two different things, tracked separately.)*
 | I-011 | 2, **4** | yes | Guard mechanism since Phase 2; **Phase 4 fix wired `SetCommitIndex` into all 3 Raft-layer sites (leader/follower/recovery) — was unarmed in production before.** End-to-end proof: Test 28. |
 | I-012 | 1 | yes | Save-before-grant and save-before-outgoing-RequestVote. |
 | I-013 | 2 | yes | Follower fsync before ACK; delayed-fsync test. |
-| I-014 | 1 | review | RPCs sent after releasing Raft mutex — code-review only, no dedicated test yet. |
+| I-014 | 1, **6** | yes | RPCs sent after releasing Raft mutex. Verified on real Raft nodes with concurrent mutex availability probes under 200ms delay: Test 50 (`ScenarioMutexNetworkIOSafety_10x`). |
 | I-016 | 3 | yes | Full 3-step linearizable read; regression-tested after Phase 4 `server.Get` fix. |
 | I-017 | **5** | yes | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Real Raft code-path proof: Test 33 (`dedup_test.go`, real Raft apply loop) and Tests 35–36 (Level 4 subprocess tests). Unit: Tests 30–32, 34. |
 | I-018 | 2 | yes | Fail-closed on durable write failure; disk-before-memory ordering. |
 | I-019 | 3 | yes | Request-identity-aware `PendingWrite` lifecycle. |
-| I-020 | 1, **4** | yes | First-boot persist + full corruption-handling; Tests 10–15, 18–26. |
+| I-020 | 1, 4, **6** | yes | First-boot persist + full corruption-handling (Tests 10–15, 18–26); Level-4/5 `ProcessCluster` (real subprocesses, SIGKILL) multi-boot progression (1->2->3), corruption fail-closed, on-disk repair, and convergence: Test 52 (`ScenarioProcessCrashRecovery_10x`). |
 | I-021 | 2 | yes | Stale/out-of-order response triple-check (role/term/attempt). |
 | I-022 | 2, 3 | yes | `matchIndex[self]==lastLogIndex`; `commitIndex`/`lastApplied` monotonic. |
 | I-023 | 3 | yes | New-leader NOOP commit + `readReadyTerm` gate. |
-| I-024 | 1, **4** | yes | Temp-file+rename replacement atomicity; 4-stage crash-point hooks (Phase 4). |
+| I-024 | 1, 4, **6** | yes | Temp-file+rename replacement atomicity; 4-stage crash-point hooks (Phase 4); Level-4/5 `ProcessCluster` (real subprocesses, SIGKILL) sequential rolling crash & recovery under continuous writes with term/log preservation and cluster convergence: Test 51 (`ScenarioRollingCrash_10x`). |

@@ -13,12 +13,19 @@ build: proto
 	@mkdir -p bin
 	go build -o bin/raftkv-node ./cmd/raftkv-node
 	go build -o bin/raftkv-cli ./cmd/raftkv-cli
+	go build -o bin/raftkv-chaos ./cmd/raftkv-chaos
 
 test:
 	go test ./...
 
 test-race:
 	go test -race ./...
+
+test-chaos:
+	go test -v -race -timeout=10m ./internal/chaos/...
+
+soak-chaos: build
+	./bin/raftkv-chaos -duration=30m -seed=1337
 
 vet:
 	go vet ./...
