@@ -3,10 +3,14 @@ package chaos
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"raftkv/internal/observability"
 	"raftkv/internal/raft"
 	raftv1 "raftkv/proto/raft/v1"
 )
@@ -41,6 +45,13 @@ type FaultTransport struct {
 	onSendHook    func(ctx context.Context, from, to, rpcType string)
 	delayedCtx    context.Context
 	delayedCancel context.CancelFunc
+	sink          observability.EventSink
+}
+
+func (t *FaultTransport) SetEventSink(sink observability.EventSink) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sink = sink
 }
 
 // NewFaultTransport creates a new FaultTransport.
@@ -111,6 +122,26 @@ func (t *FaultTransport) SetPartition(nodeA, nodeB string, blocked bool) {
 	if blocked {
 		t.cancelPendingDelaysLocked()
 	}
+
+	peersList := []string{nodeA, nodeB}
+	sort.Strings(peersList)
+	peersStr := strings.Join(peersList, ",")
+
+	if t.sink != nil {
+		eventType := observability.PartitionCreated
+		if !blocked {
+			eventType = observability.PartitionHealed
+		}
+		t.sink.Emit(observability.ClusterEvent{
+			SchemaVersion: observability.ClusterEventSchemaVersion,
+			EventID:       fmt.Sprintf("chaos/partition/%s-%d", peersStr, time.Now().UnixNano()),
+			Timestamp:     time.Now(),
+			NodeID:        nodeA,
+			PeerID:        nodeB,
+			Type:          eventType,
+			Fields:        map[string]string{"peers": peersStr},
+		})
+	}
 }
 
 // SetUnidirectionalPartition sets partition from nodeA to nodeB (asymmetric).
@@ -161,10 +192,38 @@ func (t *FaultTransport) SetGlobalFault(cfg TransportConfig) {
 func (t *FaultTransport) HealAll() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	var allPeersMap = make(map[string]bool)
+	for a, targets := range t.partitions {
+		for b, isPart := range targets {
+			if isPart {
+				allPeersMap[a] = true
+				allPeersMap[b] = true
+			}
+		}
+	}
+
 	t.partitions = make(map[string]map[string]bool)
 	t.peerConfigs = make(map[string]TransportConfig)
 	t.globalConfig = TransportConfig{}
 	t.cancelPendingDelaysLocked()
+
+	if len(allPeersMap) > 0 && t.sink != nil {
+		var pList []string
+		for p := range allPeersMap {
+			pList = append(pList, p)
+		}
+		sort.Strings(pList)
+		peersStr := strings.Join(pList, ",")
+		t.sink.Emit(observability.ClusterEvent{
+			SchemaVersion: observability.ClusterEventSchemaVersion,
+			EventID:       fmt.Sprintf("chaos/heal-all/%d", time.Now().UnixNano()),
+			Timestamp:     time.Now(),
+			NodeID:        pList[0],
+			Type:          observability.PartitionHealed,
+			Fields:        map[string]string{"peers": peersStr},
+		})
+	}
 }
 
 func (t *FaultTransport) evaluateFault(from, to string) (blocked bool, delay time.Duration, dropped bool) {

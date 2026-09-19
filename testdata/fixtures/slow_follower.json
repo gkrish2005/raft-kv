@@ -1,0 +1,663 @@
+[
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00001",
+    "sequence": 1,
+    "timestamp": "2026-09-19T19:16:52.973839+05:30",
+    "node_id": "node-1",
+    "term": 0,
+    "log_index": 0,
+    "type": "NODE_STARTED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-2/boot-1/00001",
+    "sequence": 1,
+    "timestamp": "2026-09-19T19:16:52.980633+05:30",
+    "node_id": "node-2",
+    "term": 0,
+    "log_index": 0,
+    "type": "NODE_STARTED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00001",
+    "sequence": 1,
+    "timestamp": "2026-09-19T19:16:52.985161+05:30",
+    "node_id": "node-3",
+    "term": 0,
+    "log_index": 0,
+    "type": "NODE_STARTED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00002",
+    "sequence": 2,
+    "timestamp": "2026-09-19T19:16:53.230947+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 0,
+    "type": "TERM_ADVANCED",
+    "fields": {
+      "new_term": "1",
+      "old_term": "0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00003",
+    "sequence": 3,
+    "timestamp": "2026-09-19T19:16:53.230953+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 0,
+    "type": "ELECTION_STARTED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-2/boot-1/00002",
+    "sequence": 2,
+    "timestamp": "2026-09-19T19:16:53.2385+05:30",
+    "node_id": "node-2",
+    "term": 1,
+    "log_index": 0,
+    "type": "TERM_ADVANCED",
+    "fields": {
+      "new_term": "1",
+      "old_term": "0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-2/boot-1/00003",
+    "sequence": 3,
+    "timestamp": "2026-09-19T19:16:53.244937+05:30",
+    "node_id": "node-2",
+    "peer_id": "node-1",
+    "correlation_id": "rv-node-1-1-1789825613230955000",
+    "term": 1,
+    "log_index": 0,
+    "type": "VOTE_GRANTED",
+    "fields": {
+      "candidate": "node-1"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00004",
+    "sequence": 4,
+    "timestamp": "2026-09-19T19:16:53.244973+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-2",
+    "correlation_id": "rv-node-1-1-1789825613230955000",
+    "term": 1,
+    "log_index": 0,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-2",
+      "rpc_type": "RequestVote"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00005",
+    "sequence": 5,
+    "timestamp": "2026-09-19T19:16:53.245053+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 0,
+    "type": "LEADER_ELECTED",
+    "fields": {
+      "leader": "node-1"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00006",
+    "sequence": 6,
+    "timestamp": "2026-09-19T19:16:53.247838+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-2/boot-1/00004",
+    "sequence": 4,
+    "timestamp": "2026-09-19T19:16:53.249482+05:30",
+    "node_id": "node-2",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00007",
+    "sequence": 7,
+    "timestamp": "2026-09-19T19:16:53.249499+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-2",
+    "correlation_id": "ae-node-1-1-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-2",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00008",
+    "sequence": 8,
+    "timestamp": "2026-09-19T19:16:53.249518+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "1",
+      "old_index": "0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00009",
+    "sequence": 9,
+    "timestamp": "2026-09-19T19:16:53.249546+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00002",
+    "sequence": 2,
+    "timestamp": "2026-09-19T19:16:53.254574+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 0,
+    "type": "TERM_ADVANCED",
+    "fields": {
+      "new_term": "1",
+      "old_term": "0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00003",
+    "sequence": 3,
+    "timestamp": "2026-09-19T19:16:53.257871+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00010",
+    "sequence": 10,
+    "timestamp": "2026-09-19T19:16:53.257907+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-1",
+    "term": 1,
+    "log_index": 1,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00011",
+    "sequence": 11,
+    "timestamp": "2026-09-19T19:16:53.259316+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 2,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00004",
+    "sequence": 4,
+    "timestamp": "2026-09-19T19:16:53.271056+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-2",
+    "term": 1,
+    "log_index": 2,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00005",
+    "sequence": 5,
+    "timestamp": "2026-09-19T19:16:53.271074+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-2",
+    "term": 1,
+    "log_index": 1,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "1",
+      "old_index": "0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00012",
+    "sequence": 12,
+    "timestamp": "2026-09-19T19:16:53.271101+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-2",
+    "term": 1,
+    "log_index": 2,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00013",
+    "sequence": 13,
+    "timestamp": "2026-09-19T19:16:53.271136+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 2,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "2",
+      "old_index": "1",
+      "request_id": "req-slow-0"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00006",
+    "sequence": 6,
+    "timestamp": "2026-09-19T19:16:53.271189+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 1,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00014",
+    "sequence": 14,
+    "timestamp": "2026-09-19T19:16:53.2712+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 2,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00015",
+    "sequence": 15,
+    "timestamp": "2026-09-19T19:16:53.272838+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 3,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00007",
+    "sequence": 7,
+    "timestamp": "2026-09-19T19:16:53.285821+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-3",
+    "term": 1,
+    "log_index": 3,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00008",
+    "sequence": 8,
+    "timestamp": "2026-09-19T19:16:53.285833+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-3",
+    "term": 1,
+    "log_index": 2,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "2",
+      "old_index": "1"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00016",
+    "sequence": 16,
+    "timestamp": "2026-09-19T19:16:53.285857+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-3",
+    "term": 1,
+    "log_index": 3,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00017",
+    "sequence": 17,
+    "timestamp": "2026-09-19T19:16:53.285883+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 3,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "3",
+      "old_index": "2",
+      "request_id": "req-slow-1"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00018",
+    "sequence": 18,
+    "timestamp": "2026-09-19T19:16:53.285907+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 3,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00009",
+    "sequence": 9,
+    "timestamp": "2026-09-19T19:16:53.285918+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 2,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00019",
+    "sequence": 19,
+    "timestamp": "2026-09-19T19:16:53.288613+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 4,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00010",
+    "sequence": 10,
+    "timestamp": "2026-09-19T19:16:53.298064+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-4",
+    "term": 1,
+    "log_index": 4,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00011",
+    "sequence": 11,
+    "timestamp": "2026-09-19T19:16:53.298081+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-4",
+    "term": 1,
+    "log_index": 3,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "3",
+      "old_index": "2"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00020",
+    "sequence": 20,
+    "timestamp": "2026-09-19T19:16:53.298093+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-4",
+    "term": 1,
+    "log_index": 4,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00021",
+    "sequence": 21,
+    "timestamp": "2026-09-19T19:16:53.298109+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 4,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "4",
+      "old_index": "3",
+      "request_id": "req-slow-2"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00012",
+    "sequence": 12,
+    "timestamp": "2026-09-19T19:16:53.298109+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 3,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00022",
+    "sequence": 22,
+    "timestamp": "2026-09-19T19:16:53.298132+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 4,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00023",
+    "sequence": 23,
+    "timestamp": "2026-09-19T19:16:53.299378+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 5,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00013",
+    "sequence": 13,
+    "timestamp": "2026-09-19T19:16:53.311836+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-5",
+    "term": 1,
+    "log_index": 5,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00014",
+    "sequence": 14,
+    "timestamp": "2026-09-19T19:16:53.311849+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-5",
+    "term": 1,
+    "log_index": 4,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "4",
+      "old_index": "3"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00024",
+    "sequence": 24,
+    "timestamp": "2026-09-19T19:16:53.311865+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-5",
+    "term": 1,
+    "log_index": 5,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00025",
+    "sequence": 25,
+    "timestamp": "2026-09-19T19:16:53.311889+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 5,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "5",
+      "old_index": "4",
+      "request_id": "req-slow-3"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00015",
+    "sequence": 15,
+    "timestamp": "2026-09-19T19:16:53.311899+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 4,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00026",
+    "sequence": 26,
+    "timestamp": "2026-09-19T19:16:53.311938+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 5,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00027",
+    "sequence": 27,
+    "timestamp": "2026-09-19T19:16:53.31356+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 6,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00016",
+    "sequence": 16,
+    "timestamp": "2026-09-19T19:16:53.324829+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-6",
+    "term": 1,
+    "log_index": 6,
+    "type": "LOG_APPENDED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00017",
+    "sequence": 17,
+    "timestamp": "2026-09-19T19:16:53.324837+05:30",
+    "node_id": "node-3",
+    "peer_id": "node-1",
+    "correlation_id": "ae-node-1-1-6",
+    "term": 1,
+    "log_index": 5,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "5",
+      "old_index": "4"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00028",
+    "sequence": 28,
+    "timestamp": "2026-09-19T19:16:53.324849+05:30",
+    "node_id": "node-1",
+    "peer_id": "node-3",
+    "correlation_id": "ae-node-1-1-6",
+    "term": 1,
+    "log_index": 6,
+    "type": "RPC_SUCCEEDED",
+    "fields": {
+      "peer": "node-3",
+      "rpc_type": "AppendEntries"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00029",
+    "sequence": 29,
+    "timestamp": "2026-09-19T19:16:53.324867+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 6,
+    "type": "COMMIT_ADVANCED",
+    "fields": {
+      "new_index": "6",
+      "old_index": "5",
+      "request_id": "req-slow-4"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-3/boot-1/00018",
+    "sequence": 18,
+    "timestamp": "2026-09-19T19:16:53.32487+05:30",
+    "node_id": "node-3",
+    "term": 1,
+    "log_index": 5,
+    "type": "ENTRY_APPLIED"
+  },
+  {
+    "schema_version": 1,
+    "event_id": "node-1/boot-1/00030",
+    "sequence": 30,
+    "timestamp": "2026-09-19T19:16:53.324891+05:30",
+    "node_id": "node-1",
+    "term": 1,
+    "log_index": 6,
+    "type": "ENTRY_APPLIED"
+  }
+]

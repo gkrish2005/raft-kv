@@ -3,7 +3,10 @@ package raft
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
+	"raftkv/internal/observability"
 	"raftkv/internal/storage"
 	raftv1 "raftkv/proto/raft/v1"
 )
@@ -52,11 +55,22 @@ func (n *Node) tryAdvanceCommitIndexLocked() {
 			}
 		}
 		if count >= n.quorumSizeLocked() {
+			oldCommit := n.state.commitIndex
 			n.state.commitIndex = N
 			// Arm the LogStore's I-011 committed-truncation guard so TruncateFrom
 			// rejects any attempt to truncate committed entries (leader path).
 			if cs, ok := n.cfg.LogStore.(interface{ SetCommitIndex(uint64) }); ok {
 				cs.SetCommitIndex(N)
+			}
+			if n.emitter != nil && N > oldCommit {
+				fields := map[string]string{
+					"old_index": fmt.Sprintf("%d", oldCommit),
+					"new_index": fmt.Sprintf("%d", N),
+				}
+				if entry.Command != nil && entry.Command.RequestId != "" {
+					fields["request_id"] = entry.Command.RequestId
+				}
+				n.emitter.Emit(observability.CommitAdvanced, "", "", n.state.currentTerm, N, fields)
 			}
 			n.notifyLocked(&n.commitNotifyCh)
 			return
@@ -278,6 +292,7 @@ func (n *Node) Get(ctx context.Context, key string) ([]byte, bool, error) {
 
 // Write appends a command to the leader's log and waits for it to commit and apply (I-019).
 func (n *Node) Write(ctx context.Context, cmd *raftv1.Command) ([]byte, error) {
+	start := time.Now()
 	entry, pw, err := n.appendLocalEntryWithPendingWrite(cmd)
 	if err != nil {
 		return nil, err
@@ -293,6 +308,9 @@ func (n *Node) Write(ctx context.Context, cmd *raftv1.Command) ([]byte, error) {
 		n.mu.Unlock()
 		return nil, ctx.Err()
 	case res := <-pw.Done:
+		if res.Err == nil && n.metrics != nil {
+			n.metrics.ObserveCommitLatency(time.Since(start).Seconds())
+		}
 		return res.Value, res.Err
 	}
 }

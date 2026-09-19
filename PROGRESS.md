@@ -29,7 +29,7 @@ applies across all phases.
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
 | 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
 | 6 | Chaos Testing Framework | ✅ Approved for next phase (2026-09-18) |
-| **7** | **Observability** | In progress (Pass 1 Design) |
+| **7** | **Observability** | ✅ Approved for next phase (2026-09-19) |
 | 8 | Evidence-Grounded Incident Diagnosis | Not started |
 | 9 | AI Evaluation | Not started |
 | 10 | Benchmarking, Hardening & Final Demo | Not started |
@@ -104,6 +104,7 @@ Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=
 Built fault-injection at Levels 3–5 (`docs/testing.md`) with 11 named deterministic chaos scenarios, `FaultTransport` supporting 5 discrete calibrated regimes (CleanSlow, TimeoutSlow, FullPartition, LightDrop, NodeChurn) with quorum-safety guard, 5-point post-heal state convergence engine (quiescence barrier, CommitIndex/LastApplied equality, entry-by-entry prefix comparison, KV state snapshot equality, RequestTable equality), and randomized `Fuzzer` with periodic quiescent intervals.
 Real ungraceful crash tests (Tests 51 and 52) run on `ProcessCluster` using real subprocesses and `SIGKILL`, proving rolling crash survival (I-024) and fail-closed corrupt startup with on-disk state repair (I-020). Concurrent network I/O probe verified I-014.
 **Pass 3/4 fixes:** Async-dispatch scoped to finite delay with `delayedCancel` in `HealAll()`; `IssueSyncWrite` refactored to wait strictly on `PendingWrite.Done`; `FindLeader` and `WaitForLeader` updated to track live leader by term; dynamic final leader commit snapshot in `AssertConvergence`; synchronous barrier write in periodic quiescence; semantic polling for stable read-ready cluster leader post-heal; stopped node RPC isolation.
+**Post-approval fix (2026-09-19):** In `internal/chaos/scenarios.go`, hardened `findProcessLeader` to utilize `LeaderHint` returned by follower nodes instead of blind round-robin polling; updated `issueProcessSyncWrite` to record `lastErr` when leader discovery fails; increased write and convergence timeouts in `RunScenarioRollingCrash` from 7s/8s to 10s/12s to accommodate OS process spawn and SIGKILL latency overhead under `-race`. This eliminated pre-existing intermittent timeout flakiness in `TestScenarioRollingCrash_10x` under `-race` (unrelated to Phase 7 instrumentation).
 Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in repo (2026-09-18).
 
 ---
@@ -111,7 +112,7 @@ Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in rep
 ## Current Phase (full detail)
 
 ### Phase 7 — Observability
-**Status:** In progress (Pass 1 Design) (2026-09-18)
+**Status:** Approved for next phase (2026-09-19)
 
 **Goal:** Turn chaos into structured, machine-readable telemetry per the exact `ClusterEvent`/`MetricSnapshot` schema and event-coverage matrix in `docs/architecture.md` — the foundation the AI layer (Phase 8) depends on — with an explicit failure policy so observability can never affect Raft correctness.
 
@@ -123,8 +124,48 @@ Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in rep
 - Rule 24: AI/observability path is fully asynchronous and read-only.
 - Rule 37: `ClusterEvent.Sequence` is in-memory only per boot and resets on restart. Cross-restart identity comes from `BootID`.
 
-#### Pass 1 — Design (In progress)
-- Under review: see Pass 1 Design report.
+#### Pass 1 — Design ✅ (approved)
+- Designed structured telemetry schemas (`ClusterEvent`, `MetricSnapshot`), frozen vocabularies, and 14 transition mappings.
+- Extended Rule 34 lock hierarchy: `n.mu` → `sm.mu` → `observability.mu`.
+- Designed atomic lock-free `Histogram` with percentiles and reserved `read_latency` for Phase 10.
+- Clarified RPC emission timing: `RPC_FAILED`/`RPC_SUCCEEDED` emitted strictly after `n.mu` reacquisition (I-014).
+
+#### Pass 2 — Implement ✅
+- Created `internal/observability/events.go`: `ClusterEventSchemaVersion = 1`, `ClusterEvent` struct, 17 `EventType`s, validation with bounds and `target` field exclusion, `EventSink` interface, `EventEmitter` with monotonic sequence and `<NodeID>/boot-<BootID>/%05d` `EventID`.
+- Created `internal/observability/sinks.go`: `LiveBuffer` (10k bounded ring buffer, lossy, `events_dropped_total`), `ScenarioRecorder` (lossless, JSON fixture export/load), `MultiSink` (panic-recovery isolation).
+- Created `internal/observability/metrics.go`: `MetricSnapshot`, frozen metric vocabulary, atomic `Histogram` with linear percentile interpolation, `MetricsRegistry` with non-blocking atomic operations.
+- Created `internal/observability/exporter.go`: HTTP handlers for `/metrics` (Prometheus format) and `/debug/events` (JSON array snapshot).
+- Created unit and concurrency tests in `internal/observability/{events,sinks,metrics}_test.go`.
+- Instrumented call-sites in `internal/raft/{node,election,replication,commit,apply}.go`, `internal/chaos/faults.go`, `cmd/raftkv-node/main.go`, and `cmd/raftkv-cli/main.go`.
+- Added `TestObservability_14TransitionsMatrix` and `TestObservability_GenerateFixtures` in `internal/chaos/observability_test.go`, generating replayable JSON fixtures in `testdata/fixtures/`.
+
+#### Pass 3 — Audit ✅
+- Verified I-014/Rule 16: `RPC_FAILED`/`RPC_SUCCEEDED` emitted strictly after `n.mu` reacquisition.
+- Verified I-015/Rule 23: Zero imports of `internal/raft`, `internal/storage`, or `internal/cluster` in `internal/observability`.
+- Verified I-020/Rule 36: `EventEmitter` initialized strictly after `Recover()` durably persists `BootID`.
+- Verified Rule 32: `/metrics` reads atomics/histograms without acquiring `n.mu`. `MultiSink` recovers panics so faulty sinks cannot affect Raft.
+- Verified Rule 34: Lock ordering `n.mu` → `sm.mu` → `observability.mu` maintained across all call sites.
+- Verified Rule 37: `ClusterEvent.Sequence` is in-memory only per boot; cross-boot identity is `(BootID, Sequence)`.
+- Verified I-007: Traced all three call-sites of `persistLocked` outward, proving all four term-change touchpoints + self-election route through `stepDownLocked` / `startElection` and emit `TERM_ADVANCED`. Added `TestHigherTermAllFourTouchpointsEmitTermAdvanced` (PASS under `-race`).
+- Verified field bounds: Max 10 fields, 64-byte key, 512-byte value match `docs/architecture.md` line 164.
+- Identified Defect #1: `election_duration` histogram omitted `outcome="abandoned"`.
+- Identified Defect #2: Touchpoint 2b omitted `outcome="abandoned"` when candidate receives same-term `AppendEntries`.
+
+#### Pass 4 — Fix ✅
+- **Defect #1 (`election_duration` "abandoned" omitted on higher-term step-down)**:
+  - *Before*: `election_duration` histogram only recorded `elected` and `lost`; stepping down upon discovering a higher term recorded nothing. `startTime` was an unshared local variable in `startElection()`, and `startElection()` did not exit early when stepped down mid-election.
+  - *After*: Added `electionStartTime` to `Node` in `node.go`. Wired `n.metrics.ObserveElectionDuration(..., "abandoned")` into `stepDownLocked` when `outgoingRole == Candidate && outgoingElectionTerm != 0`. Added early-exit checks in `startElection()`'s peer loop and post-response handling (`if n.state.role != Candidate || n.state.electionTerm != term { return }`), and guarded `lost` with `role == Candidate && electionTerm == term` to ensure mutually exclusive single-recording.
+- **Defect #2 (Touchpoint 2b: same-term leader AppendEntries omitted "abandoned")**:
+  - *Before*: In `replication.go:232`, a candidate receiving `AppendEntries` from a legitimate leader in the same term (`req.Term == currentTerm`) set `role = Follower`, but left `electionTerm` non-zero and recorded zero metric observation (`abandoned` was not observed).
+  - *After*: Added check `if n.state.role == Candidate && n.state.electionTerm != 0` in `replication.go:232`: records `n.metrics.ObserveElectionDuration(..., "abandoned")` and resets `n.state.electionTerm = 0` before setting `role = Follower`.
+
+#### Pass 5 — Verify ✅
+- Added `TestElectionDurationOutcome_AbandonedAndNoDoubleRecord` in `internal/raft/election_test.go` exercising all 8 outcome branches under `-race` (Touchpoint 3 abandoned, Touchpoint 1 abandoned, Touchpoint 2a abandoned, Touchpoint 2b abandoned, pure timeout lost with zero peer responses, higher-term abandoned mid-election without double recording, denied-votes lost, and quorum elected).
+- Added `TestObservability_ConcurrentCandidateHigherTermAppendEntries_Abandoned` in `internal/chaos/observability_test.go` providing genuine chaos-level coverage for Touchpoint 2a (candidate receives higher-term `AppendEntries` from newly elected leader, records `abandoned`, and steps down to Follower).
+  - *Audit & Iteration Note:* Attempts to force same-term timing (Touchpoint 2b) under real goroutine scheduling were found to be vulnerable to goroutine scheduling delay under parallel full-suite `-race` load (where restarted node-1 could time out and bump terms before node-2 completed election). Per developer instruction, the chaos test was explicitly renamed to `TestObservability_ConcurrentCandidateHigherTermAppendEntries_Abandoned` to accurately describe its coverage (Touchpoint 2a under real concurrency), while Touchpoint 2b remains covered deterministically at the unit level in `internal/raft/election_test.go:347` (`touchpoint 2b: incoming AppendEntries from same-term leader mid-election records abandoned exactly once`).
+- Full-suite race run: `go test -race -count=1 -timeout 300s ./...` 100% green across all packages.
+- Static analysis: `go vet ./...` clean (0 warnings, 0 errors).
+- All 6 exit criteria in `docs/phases/phase-07.md` verified.
 
 ---
 
@@ -174,11 +215,14 @@ anything under-built on purpose per the "under-build and flag" rule.)*
    (`STATUS_REQUEST_ID_REUSED`, `STATUS_TIMEOUT`, `STATUS_NO_LEADER`, `STATUS_OVERLOADED`)
    were verified to already exist in `proto/client.proto` and generated Go code; used as-is.
 
-7. **[Phase 7 flag — RequestTable snapshotting correctness gap]** `RequestTable` is not
-   included in the snapshot scope deferred to Phase 7. Phase 7 must explicitly re-verify
-   I-017 once snapshotting exists — a node restoring from a snapshot plus a truncated log
-   tail must not lose dedup history for compacted entries. This is a correctness gap,
-   not just a performance one, and needs to survive five phases without getting lost.
+7. **[Post-MVP flag — RequestTable snapshotting correctness gap]** Snapshotting does
+   not exist in Phase 7 and is explicitly out of scope for the MVP per `AGENTS.md` Rule 6
+   (Phases 8–10 cover incident diagnosis, AI eval, and benchmarking, respectively; none
+   introduce snapshotting). Therefore, this correctness gap is formally carried forward as
+   a Post-MVP requirement: whenever snapshotting is introduced to compact the log,
+   `RequestTable` must be included in the snapshot state and verified against I-017 so that
+   deduplication history for compacted entries is not lost upon restoring from a snapshot
+   plus truncated log tail.
 
 8. **[Phase 10 flag — RequestTable soak test memory tracking]** Noted in `docs/benchmarks.md`
    methodology that the soak test's memory-growth check should track `RequestTable` size

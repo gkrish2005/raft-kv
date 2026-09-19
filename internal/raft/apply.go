@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"raftkv/internal/observability"
 	"raftkv/internal/storage"
 )
 
@@ -55,6 +56,9 @@ func (n *Node) applierLoop() {
 		// Application-level errors (e.g. ErrRequestIDReused) do NOT roll back commitIndex
 		// or prevent lastApplied from advancing monotonically.
 		n.state.lastApplied = idx
+		if n.emitter != nil {
+			n.emitter.Emit(observability.EntryApplied, "", "", entry.Term, idx, nil)
+		}
 
 		// Wake read barrier waiters waiting for lastApplied >= barrier.CommitIndex
 		n.notifyLocked(&n.applyNotifyCh)

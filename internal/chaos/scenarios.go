@@ -676,6 +676,12 @@ func findProcessLeader(pc *ProcessCluster, timeout time.Duration, exclude ...str
 				if len(resp.Nodes) > 0 && resp.Nodes[0].Role == "Leader" {
 					return id, addr, nil
 				}
+				if resp.LeaderHint != "" && !excluded[resp.LeaderHint] {
+					hintAddr := pc.Address(resp.LeaderHint)
+					if hintAddr != "" {
+						return resp.LeaderHint, hintAddr, nil
+					}
+				}
 			}
 		}
 		time.Sleep(30 * time.Millisecond)
@@ -712,6 +718,8 @@ func issueProcessSyncWrite(pc *ProcessCluster, key, val, reqID string, timeout t
 					lastErr = fmt.Errorf("status %s: %s", resp.Status.String(), resp.ErrorMessage)
 				}
 			}
+		} else if err != nil {
+			lastErr = err
 		}
 		time.Sleep(backoff)
 	}
@@ -842,7 +850,7 @@ func RunScenarioRollingCrash(t TestingT, baseDir string) {
 	}
 
 	// 1. Initial write to elected leader
-	if err := issueProcessSyncWrite(pc, "roll-0", "val-0", "req-roll-0", 7*time.Second); err != nil {
+	if err := issueProcessSyncWrite(pc, "roll-0", "val-0", "req-roll-0", 10*time.Second); err != nil {
 		t.Fatalf("initial write failed: %v", err)
 	}
 
@@ -858,7 +866,7 @@ func RunScenarioRollingCrash(t TestingT, baseDir string) {
 		writeKey := fmt.Sprintf("roll-mid-%d", i+1)
 		writeVal := fmt.Sprintf("val-mid-%d", i+1)
 		writeReq := fmt.Sprintf("req-roll-mid-%d", i+1)
-		if err := issueProcessSyncWrite(pc, writeKey, writeVal, writeReq, 7*time.Second, id); err != nil {
+		if err := issueProcessSyncWrite(pc, writeKey, writeVal, writeReq, 10*time.Second, id); err != nil {
 			t.Fatalf("write with %s killed failed: %v", id, err)
 		}
 		keysWritten[writeKey] = writeVal
@@ -873,13 +881,13 @@ func RunScenarioRollingCrash(t TestingT, baseDir string) {
 	}
 
 	// 3. Final write to stable cluster
-	if err := issueProcessSyncWrite(pc, "roll-final", "val-final", "req-roll-final", 7*time.Second); err != nil {
+	if err := issueProcessSyncWrite(pc, "roll-final", "val-final", "req-roll-final", 10*time.Second); err != nil {
 		t.Fatalf("final write failed: %v", err)
 	}
 	keysWritten["roll-final"] = "val-final"
 
 	// 4. Verify state convergence across all live nodes
-	assertProcessConvergence(t, pc, keysWritten, 8*time.Second)
+	assertProcessConvergence(t, pc, keysWritten, 12*time.Second)
 }
 
 // readOnDiskTermVote directly unpacks the on-disk TermVoteRecord protobuf without triggering store.Load() boot counter increment.

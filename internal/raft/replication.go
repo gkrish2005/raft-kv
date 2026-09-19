@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"raftkv/internal/observability"
 	raftv1 "raftkv/proto/raft/v1"
 )
 
@@ -80,6 +82,9 @@ func (n *Node) replicateToPeer(peer string) {
 		LeaderCommit: n.state.commitIndex,
 	}
 
+	correlationID := fmt.Sprintf("ae-%s-%d-%d", n.cfg.ID, req.Term, attempt)
+	req.CorrelationId = correlationID
+
 	// Release Raft mutex before performing network I/O (I-014)
 	n.mu.Unlock()
 
@@ -87,6 +92,7 @@ func (n *Node) replicateToPeer(peer string) {
 	resp, err := n.cfg.Transport.SendAppendEntries(ctx, peer, req)
 	cancel()
 
+	// Reacquire n.mu before handling response (I-014: zero network I/O under n.mu)
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -97,7 +103,22 @@ func (n *Node) replicateToPeer(peer string) {
 		n.peerInFlight[peer] = false
 	}
 	if err != nil {
+		if n.emitter != nil {
+			n.emitter.Emit(observability.RPCFailed, peer, correlationID, n.state.currentTerm, n.lastLogIndexLocked(), map[string]string{
+				"rpc_type":    "AppendEntries",
+				"peer":        peer,
+				"error_class": "network_error",
+			})
+		}
+		n.metrics.IncAppendEntriesFailures(peer)
 		return
+	}
+
+	if n.emitter != nil {
+		n.emitter.Emit(observability.RPCSucceeded, peer, correlationID, n.state.currentTerm, n.lastLogIndexLocked(), map[string]string{
+			"rpc_type": "AppendEntries",
+			"peer":     peer,
+		})
 	}
 
 	n.handleAppendEntriesResponseLocked(peer, req, resp, attempt)
@@ -140,6 +161,12 @@ func (n *Node) handleAppendEntriesResponseLocked(peer string, req *raftv1.Append
 		n.tryAdvanceCommitIndexLocked()
 	} else {
 		n.handleAppendEntriesConflictLocked(peer, resp)
+	}
+
+	lastIdx := n.lastLogIndexLocked()
+	matchIdx := n.state.matchIndex[peer]
+	if lastIdx >= matchIdx {
+		n.metrics.SetReplicationLag(peer, lastIdx-matchIdx)
 	}
 }
 
@@ -203,6 +230,12 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 	}
 
 	// Reset election timer and ensure follower role
+	if n.state.role == Candidate && n.state.electionTerm != 0 {
+		if n.metrics != nil {
+			n.metrics.ObserveElectionDuration(time.Since(n.electionStartTime).Seconds(), "abandoned")
+		}
+		n.state.electionTerm = 0
+	}
 	n.state.role = Follower
 	n.state.leaderID = req.LeaderId
 	n.requestElectionTimerReset()
@@ -259,6 +292,13 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 					n.state.role = StorageFailed
 					return nil, fmt.Errorf("truncate conflicting entries failed: %w", err)
 				}
+				if n.emitter != nil {
+					n.emitter.Emit(observability.LogConflict, req.LeaderId, req.CorrelationId, n.state.currentTerm, entry.Index, map[string]string{
+						"peer":  req.LeaderId,
+						"index": fmt.Sprintf("%d", entry.Index),
+						"term":  fmt.Sprintf("%d", existing.Term),
+					})
+				}
 				entriesToAppend = req.Entries[i:]
 				break
 			}
@@ -277,18 +317,30 @@ func (n *Node) AppendEntries(ctx context.Context, req *raftv1.AppendEntriesReque
 			n.state.role = StorageFailed
 			return nil, fmt.Errorf("append entries failed: %w", err)
 		}
+		if n.emitter != nil {
+			for _, e := range entriesToAppend {
+				n.emitter.Emit(observability.LogAppended, req.LeaderId, req.CorrelationId, n.state.currentTerm, e.Index, nil)
+			}
+		}
 	}
 
 	// 6. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry) (I-008)
 	// Clamped to lastNewEntryIndex (req.PrevLogIndex + len(req.Entries)), NOT raw local log length.
 	lastNewEntryIndex := req.PrevLogIndex + uint64(len(req.Entries))
 	if req.LeaderCommit > n.state.commitIndex {
+		oldCommit := n.state.commitIndex
 		n.state.commitIndex = min(req.LeaderCommit, lastNewEntryIndex)
 		// Arm the LogStore's I-011 committed-truncation guard (follower path).
 		// This is the operationally critical site: TruncateFrom is called from step 4 above
 		// during conflict resolution, and must see an up-to-date commitIndex barrier.
 		if cs, ok := n.cfg.LogStore.(interface{ SetCommitIndex(uint64) }); ok {
 			cs.SetCommitIndex(n.state.commitIndex)
+		}
+		if n.emitter != nil && n.state.commitIndex > oldCommit {
+			n.emitter.Emit(observability.CommitAdvanced, req.LeaderId, req.CorrelationId, n.state.currentTerm, n.state.commitIndex, map[string]string{
+				"old_index": fmt.Sprintf("%d", oldCommit),
+				"new_index": fmt.Sprintf("%d", n.state.commitIndex),
+			})
 		}
 		n.notifyLocked(&n.commitNotifyCh)
 	}

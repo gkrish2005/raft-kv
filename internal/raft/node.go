@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"raftkv/internal/observability"
 	"raftkv/internal/storage"
 	raftv1 "raftkv/proto/raft/v1"
 )
@@ -34,6 +35,8 @@ type Config struct {
 	StateMachine    *storage.KVStateMachine
 	ElectionTimeout func() time.Duration
 	RPCTimeout      time.Duration
+	EventSink       observability.EventSink
+	Metrics         *observability.MetricsRegistry
 }
 type Node struct {
 	raftv1.UnimplementedRaftServiceServer
@@ -59,6 +62,9 @@ type Node struct {
 	peerInFlight       map[string]bool
 	started            bool
 	recovered          bool
+	emitter            *observability.EventEmitter
+	metrics            *observability.MetricsRegistry
+	electionStartTime  time.Time
 }
 
 func NewNode(cfg Config) (*Node, error) {
@@ -79,10 +85,17 @@ func NewNode(cfg Config) (*Node, error) {
 	if cfg.RPCTimeout == 0 {
 		cfg.RPCTimeout = RPCTimeout
 	}
+	if cfg.EventSink == nil {
+		cfg.EventSink = &observability.NopSink{}
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = observability.NewMetricsRegistry()
+	}
 	return &Node{
 		cfg:                cfg,
 		state:              nodeState{role: Follower},
 		sm:                 cfg.StateMachine,
+		metrics:            cfg.Metrics,
 		replicationAttempt: make(map[string]uint64),
 		peerInFlight:       make(map[string]bool),
 		confirmedAttempt:   make(map[string]uint64),
@@ -92,6 +105,14 @@ func NewNode(cfg Config) (*Node, error) {
 		readReadyNotifyCh:  make(chan struct{}),
 		readQuorumNotifyCh: make(chan struct{}),
 	}, nil
+}
+
+func (n *Node) Metrics() *observability.MetricsRegistry {
+	return n.metrics
+}
+
+func (n *Node) Emitter() *observability.EventEmitter {
+	return n.emitter
 }
 // Recover executes the crash-recovery sequence per docs/architecture.md, I-005, and I-020:
 // 1. Read persisted currentTerm, votedFor, bootID from TermVoteStore.
@@ -169,6 +190,17 @@ func (n *Node) Start() error {
 	n.resetTimer = make(chan time.Duration, 1)
 	n.started = true
 	n.stopped = false
+
+	// Initialize EventEmitter with durably persisted BootID (I-020).
+	// Emission happens strictly after Recover() finishes durable write.
+	n.emitter = observability.NewEventEmitter(n.cfg.ID, n.state.bootID, n.cfg.EventSink, n.cfg.Clock.Now)
+	if n.state.bootID == 1 {
+		n.emitter.Emit(observability.NodeStarted, "", "", n.state.currentTerm, n.lastLogIndexLocked(), nil)
+	} else {
+		n.emitter.Emit(observability.NodeRestarted, "", "", n.state.currentTerm, n.lastLogIndexLocked(), nil)
+	}
+	n.metrics.SetNodeUp(true)
+
 	slog.Info("raft node started", "node_id", n.cfg.ID, "role", n.state.role, "term", n.state.currentTerm)
 	go n.electionLoop()
 	n.applierWg.Add(1)
@@ -194,6 +226,11 @@ func (n *Node) Stop() {
 	close(n.applyNotifyCh)
 	close(n.readReadyNotifyCh)
 	close(n.readQuorumNotifyCh)
+
+	if n.emitter != nil {
+		n.emitter.Emit(observability.NodeStopped, "", "", n.state.currentTerm, n.lastLogIndexLocked(), nil)
+	}
+	n.metrics.SetNodeUp(false)
 
 	done := n.done
 	n.mu.Unlock()
@@ -398,6 +435,9 @@ func (n *Node) appendLocalEntryLocked(cmd *raftv1.Command) (*raftv1.LogEntry, er
 
 	// matchIndex[self] == lastLogIndex (I-022)
 	n.state.matchIndex[n.cfg.ID] = newIndex
+	if n.emitter != nil {
+		n.emitter.Emit(observability.LogAppended, "", "", n.state.currentTerm, newIndex, nil)
+	}
 	n.tryAdvanceCommitIndexLocked()
 	return entry, nil
 }

@@ -2,10 +2,12 @@ package raft
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"raftkv/internal/observability"
 	"raftkv/internal/storage"
 	raftv1 "raftkv/proto/raft/v1"
 )
@@ -99,6 +101,395 @@ func TestHigherTermAllFourTouchpointsPersistBeforeContinuing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHigherTermAllFourTouchpointsEmitTermAdvanced(t *testing.T) {
+	cases := []struct {
+		name        string
+		initialRole Role
+		invoke      func(*Node)
+	}{
+		{
+			name:        "incoming request vote (as follower)",
+			initialRole: Follower,
+			invoke: func(n *Node) {
+				_, _ = n.RequestVote(context.Background(), &raftv1.RequestVoteRequest{Term: 6, CandidateId: "other"})
+			},
+		},
+		{
+			name:        "incoming request vote (as candidate)",
+			initialRole: Candidate,
+			invoke: func(n *Node) {
+				_, _ = n.RequestVote(context.Background(), &raftv1.RequestVoteRequest{Term: 6, CandidateId: "other"})
+			},
+		},
+		{
+			name:        "incoming append entries (as follower)",
+			initialRole: Follower,
+			invoke: func(n *Node) {
+				_, _ = n.AppendEntries(context.Background(), &raftv1.AppendEntriesRequest{Term: 6, LeaderId: "other"})
+			},
+		},
+		{
+			name:        "incoming append entries (as leader)",
+			initialRole: Leader,
+			invoke: func(n *Node) {
+				_, _ = n.AppendEntries(context.Background(), &raftv1.AppendEntriesRequest{Term: 6, LeaderId: "other"})
+			},
+		},
+		{
+			name:        "request vote response revealing higher term",
+			initialRole: Candidate,
+			invoke: func(n *Node) {
+				n.HandleRequestVoteResponse(&raftv1.RequestVoteResponse{Term: 6})
+			},
+		},
+		{
+			name:        "append entries response revealing higher term",
+			initialRole: Leader,
+			invoke: func(n *Node) {
+				n.HandleAppendEntriesResponse("peer", &raftv1.AppendEntriesRequest{Term: 5}, &raftv1.AppendEntriesResponse{Term: 6}, 1)
+			},
+		},
+		{
+			name:        "candidate self-election",
+			initialRole: Follower,
+			invoke: func(n *Node) {
+				n.startElection()
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := observability.NewScenarioRecorder()
+			store := &memoryStore{boot: 1}
+			clock := NewFakeClock(time.Unix(0, 0))
+			n, err := NewNode(Config{
+				ID:        "n1",
+				Peers:     []string{"n2", "n3"},
+				Clock:     clock,
+				Transport: noTransport{},
+				Store:     store,
+				EventSink: recorder,
+			})
+			if err != nil {
+				t.Fatalf("failed to create node: %v", err)
+			}
+			n.state = nodeState{currentTerm: 5, votedFor: "n1", role: tc.initialRole, electionTerm: 5, bootID: 1}
+			n.emitter = observability.NewEventEmitter("n1", 1, recorder, clock.Now)
+
+			tc.invoke(n)
+
+			events := recorder.Events()
+			var termEvents []observability.ClusterEvent
+			for _, e := range events {
+				if e.Type == observability.TermAdvanced {
+					termEvents = append(termEvents, e)
+				}
+			}
+			if len(termEvents) != 1 {
+				t.Fatalf("expected exactly 1 TERM_ADVANCED event, got %d (all events: %v)", len(termEvents), events)
+			}
+			te := termEvents[0]
+			if te.Term != 6 {
+				t.Errorf("TERM_ADVANCED event term = %d, want 6", te.Term)
+			}
+			if te.Fields["old_term"] != "5" {
+				t.Errorf("TERM_ADVANCED old_term = %q, want '5'", te.Fields["old_term"])
+			}
+			if te.Fields["new_term"] != "6" {
+				t.Errorf("TERM_ADVANCED new_term = %q, want '6'", te.Fields["new_term"])
+			}
+			if !strings.Contains(te.EventID, "/boot-1/") {
+				t.Errorf("TERM_ADVANCED eventID = %q, want containing /boot-1/", te.EventID)
+			}
+		})
+	}
+}
+
+type higherTermTransport struct {
+	higherTerm uint64
+}
+
+func (t higherTermTransport) SendRequestVote(ctx context.Context, peer string, req *raftv1.RequestVoteRequest) (*raftv1.RequestVoteResponse, error) {
+	return &raftv1.RequestVoteResponse{Term: t.higherTerm, VoteGranted: false}, nil
+}
+func (t higherTermTransport) SendAppendEntries(ctx context.Context, peer string, req *raftv1.AppendEntriesRequest) (*raftv1.AppendEntriesResponse, error) {
+	return nil, context.Canceled
+}
+
+type denyingTransport struct{}
+
+func (denyingTransport) SendRequestVote(ctx context.Context, peer string, req *raftv1.RequestVoteRequest) (*raftv1.RequestVoteResponse, error) {
+	return &raftv1.RequestVoteResponse{Term: req.Term, VoteGranted: false}, nil
+}
+func (denyingTransport) SendAppendEntries(ctx context.Context, peer string, req *raftv1.AppendEntriesRequest) (*raftv1.AppendEntriesResponse, error) {
+	return nil, context.Canceled
+}
+
+type grantingTransport struct{}
+
+func (grantingTransport) SendRequestVote(ctx context.Context, peer string, req *raftv1.RequestVoteRequest) (*raftv1.RequestVoteResponse, error) {
+	return &raftv1.RequestVoteResponse{Term: req.Term, VoteGranted: true}, nil
+}
+func (grantingTransport) SendAppendEntries(ctx context.Context, peer string, req *raftv1.AppendEntriesRequest) (*raftv1.AppendEntriesResponse, error) {
+	return nil, context.Canceled
+}
+
+type timingOutTransport struct{}
+
+func (timingOutTransport) SendRequestVote(ctx context.Context, peer string, req *raftv1.RequestVoteRequest) (*raftv1.RequestVoteResponse, error) {
+	return nil, context.DeadlineExceeded
+}
+func (timingOutTransport) SendAppendEntries(ctx context.Context, peer string, req *raftv1.AppendEntriesRequest) (*raftv1.AppendEntriesResponse, error) {
+	return nil, context.DeadlineExceeded
+}
+
+func TestElectionDurationOutcome_AbandonedAndNoDoubleRecord(t *testing.T) {
+	t.Run("touchpoint 3: HandleRequestVoteResponse mid-election records abandoned exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: noTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Candidate in term 5
+		n.state = nodeState{currentTerm: 5, votedFor: "n1", role: Candidate, electionTerm: 5, bootID: 1}
+		n.electionStartTime = time.Now()
+
+		// Discover higher term 6 via Touchpoint 3
+		n.HandleRequestVoteResponse(&raftv1.RequestVoteResponse{Term: 6, VoteGranted: false})
+
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+
+		// Re-triggering stepDownLocked in same or higher term should NOT record abandoned again
+		n.HandleRequestVoteResponse(&raftv1.RequestVoteResponse{Term: 7, VoteGranted: false})
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count after second stepDown = %d, want 1 (double-recording detected)", got)
+		}
+	})
+
+	t.Run("touchpoint 1: incoming RequestVote revealing higher term mid-election records abandoned exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: noTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 5, votedFor: "n1", role: Candidate, electionTerm: 5, bootID: 1}
+		n.electionStartTime = time.Now()
+
+		_, _ = n.RequestVote(context.Background(), &raftv1.RequestVoteRequest{Term: 6, CandidateId: "n2"})
+
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("touchpoint 2a: incoming AppendEntries revealing higher term mid-election records abandoned exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: noTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 5, votedFor: "n1", role: Candidate, electionTerm: 5, bootID: 1}
+		n.electionStartTime = time.Now()
+
+		_, _ = n.AppendEntries(context.Background(), &raftv1.AppendEntriesRequest{Term: 6, LeaderId: "n2"})
+
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("touchpoint 2b: incoming AppendEntries from same-term leader mid-election records abandoned exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: noTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 5, votedFor: "n1", role: Candidate, electionTerm: 5, bootID: 1}
+		n.electionStartTime = time.Now()
+
+		_, _ = n.AppendEntries(context.Background(), &raftv1.AppendEntriesRequest{Term: 5, LeaderId: "n2"})
+
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("startElection pure timeout with zero peer responses (silent partition): records lost exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:         "n1",
+			Peers:      []string{"n2", "n3"},
+			Clock:      clock,
+			Transport:  timingOutTransport{},
+			Store:      &memoryStore{boot: 1},
+			Metrics:    reg,
+			RPCTimeout: 5 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1}
+
+		n.startElection()
+
+		if got := reg.ElectionDuration("lost").Count(); got != 1 {
+			t.Fatalf("lost count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("abandoned").Count(); got != 0 {
+			t.Fatalf("abandoned count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("startElection receives higher term: records abandoned and exits without double-recording", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: higherTermTransport{higherTerm: 6},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1}
+
+		n.startElection()
+
+		if got := reg.ElectionDuration("abandoned").Count(); got != 1 {
+			t.Fatalf("abandoned count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0 (double-recorded as lost!)", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("startElection lost (votes denied): records lost exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: denyingTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1}
+
+		n.startElection()
+
+		if got := reg.ElectionDuration("lost").Count(); got != 1 {
+			t.Fatalf("lost count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("abandoned").Count(); got != 0 {
+			t.Fatalf("abandoned count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("elected").Count(); got != 0 {
+			t.Fatalf("elected count = %d, want 0", got)
+		}
+	})
+
+	t.Run("startElection elected: records elected exactly once", func(t *testing.T) {
+		reg := observability.NewMetricsRegistry()
+		clock := NewFakeClock(time.Unix(0, 0))
+		n, err := NewNode(Config{
+			ID:        "n1",
+			Peers:     []string{"n2", "n3"},
+			Clock:     clock,
+			Transport: grantingTransport{},
+			Store:     &memoryStore{boot: 1},
+			Metrics:   reg,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.state = nodeState{currentTerm: 4, role: Follower, bootID: 1}
+
+		n.startElection()
+
+		if got := reg.ElectionDuration("elected").Count(); got != 1 {
+			t.Fatalf("elected count = %d, want 1", got)
+		}
+		if got := reg.ElectionDuration("abandoned").Count(); got != 0 {
+			t.Fatalf("abandoned count = %d, want 0", got)
+		}
+		if got := reg.ElectionDuration("lost").Count(); got != 0 {
+			t.Fatalf("lost count = %d, want 0", got)
+		}
+	})
 }
 
 type directTransport struct{ nodes map[string]*Node }

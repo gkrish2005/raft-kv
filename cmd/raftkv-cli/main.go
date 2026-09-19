@@ -3,14 +3,18 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"raftkv/internal/observability"
 	clientv1 "raftkv/proto/client/v1"
 )
 
@@ -30,6 +34,8 @@ func printUsage() {
 	fmt.Println("  set <key> <value>      Set a key to a value")
 	fmt.Println("  delete <key>           Delete a key")
 	fmt.Println("  status                 Get cluster status")
+	fmt.Println("  events replay <file>   Replay structured telemetry from JSON fixture")
+	fmt.Println("  events live [http-url] Stream recent events from live node (/debug/events)")
 	fmt.Println("\nFlags:")
 	fmt.Println("  -server string         Server address (default \"localhost:50051\")")
 	fmt.Println("  -timeout duration      Request timeout (default 5s)")
@@ -60,6 +66,97 @@ func main() {
 	}
 
 	cmd := args[0]
+
+	if cmd == "events" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: raftkv-cli events <replay|live> [args]")
+			os.Exit(1)
+		}
+		subcmd := args[1]
+		switch subcmd {
+		case "replay":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: raftkv-cli events replay <fixture.json>")
+				os.Exit(1)
+			}
+			filePath := args[2]
+			events, err := observability.LoadFromJSON(filePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to load fixture: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Loaded %d events from %s:\n", len(events), filePath)
+			for _, e := range events {
+				if err := observability.ValidateEvent(e); err != nil {
+					fmt.Printf("[INVALID] %v\n", err)
+					continue
+				}
+				corr := ""
+				if e.CorrelationID != "" {
+					corr = fmt.Sprintf(" corr=%s", e.CorrelationID)
+				}
+				peer := ""
+				if e.PeerID != "" {
+					peer = fmt.Sprintf(" peer=%s", e.PeerID)
+				}
+				fields := ""
+				if len(e.Fields) > 0 {
+					var pairs []string
+					for k, v := range e.Fields {
+						pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+					}
+					fields = fmt.Sprintf(" [%s]", strings.Join(pairs, " "))
+				}
+				fmt.Printf("[%05d] %s %-18s node=%s%s%s term=%d idx=%d%s\n",
+					e.Sequence, e.Timestamp.Format("15:04:05.000"), e.Type, e.NodeID, peer, corr, e.Term, e.LogIndex, fields)
+			}
+			return
+		case "live":
+			httpAddr := "http://localhost:9091/debug/events"
+			if len(args) >= 3 {
+				httpAddr = args[2]
+				if !strings.HasPrefix(httpAddr, "http://") && !strings.HasPrefix(httpAddr, "https://") {
+					httpAddr = "http://" + httpAddr + "/debug/events"
+				}
+			}
+			resp, err := http.Get(httpAddr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to fetch live events from %s: %v\n", httpAddr, err)
+				os.Exit(1)
+			}
+			defer resp.Body.Close()
+			var events []observability.ClusterEvent
+			if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to decode events: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Live events from %s (%d events):\n", httpAddr, len(events))
+			for _, e := range events {
+				corr := ""
+				if e.CorrelationID != "" {
+					corr = fmt.Sprintf(" corr=%s", e.CorrelationID)
+				}
+				peer := ""
+				if e.PeerID != "" {
+					peer = fmt.Sprintf(" peer=%s", e.PeerID)
+				}
+				fields := ""
+				if len(e.Fields) > 0 {
+					var pairs []string
+					for k, v := range e.Fields {
+						pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+					}
+					fields = fmt.Sprintf(" [%s]", strings.Join(pairs, " "))
+				}
+				fmt.Printf("[%05d] %s %-18s node=%s%s%s term=%d idx=%d%s\n",
+					e.Sequence, e.Timestamp.Format("15:04:05.000"), e.Type, e.NodeID, peer, corr, e.Term, e.LogIndex, fields)
+			}
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown events subcommand %q\n", subcmd)
+			os.Exit(1)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()

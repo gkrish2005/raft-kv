@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"raftkv/internal/cluster"
+	"raftkv/internal/observability"
 	"raftkv/internal/raft"
 	"raftkv/internal/storage"
 )
@@ -37,11 +38,20 @@ type InProcessCluster struct {
 	nodes     map[string]*NodeContext
 	transport *FaultTransport
 	baseDir   string
+	sink      observability.EventSink
 }
 
 // NewInProcessCluster initializes a cluster of n nodes using FileLogStore and FileTermVoteStore.
 func NewInProcessCluster(nodeIDs []string, baseDir string, seed int64) (*InProcessCluster, error) {
+	return NewInProcessClusterWithSink(nodeIDs, baseDir, seed, nil)
+}
+
+// NewInProcessClusterWithSink initializes a cluster of n nodes attached to an EventSink.
+func NewInProcessClusterWithSink(nodeIDs []string, baseDir string, seed int64, sink observability.EventSink) (*InProcessCluster, error) {
 	transport := NewFaultTransport(nil, seed)
+	if sink != nil {
+		transport.SetEventSink(sink)
+	}
 	nodes := make(map[string]*NodeContext, len(nodeIDs))
 
 	c := &InProcessCluster{
@@ -49,6 +59,7 @@ func NewInProcessCluster(nodeIDs []string, baseDir string, seed int64) (*InProce
 		nodes:     nodes,
 		transport: transport,
 		baseDir:   baseDir,
+		sink:      sink,
 	}
 
 	for _, id := range nodeIDs {
@@ -92,6 +103,7 @@ func (c *InProcessCluster) createNodeContext(id, dataDir string) (*NodeContext, 
 		Store:        store,
 		LogStore:     logStore,
 		StateMachine: sm,
+		EventSink:    c.sink,
 		ElectionTimeout: func() time.Duration {
 			// Deterministic staggered timeouts based on node ID to avoid split votes
 			idx := 0

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 
 	"raftkv/internal/cluster"
+	"raftkv/internal/observability"
 	"raftkv/internal/raft"
 	"raftkv/internal/storage"
 	clientv1 "raftkv/proto/client/v1"
@@ -137,6 +139,9 @@ func (s *server) Get(ctx context.Context, req *clientv1.GetRequest) (*clientv1.G
 		}
 		val = v
 		found = f
+		if s.raftNode.Metrics() != nil {
+			s.raftNode.Metrics().ObserveReadLatency(time.Since(start).Seconds())
+		}
 	} else {
 		// Single-node dev/test mode: no Raft layer, direct state machine read is correct.
 		val, found = s.sm.Get(req.GetKey())
@@ -455,6 +460,7 @@ func (s *server) ClusterStatus(ctx context.Context, req *clientv1.ClusterStatusR
 
 func main() {
 	addr := flag.String("addr", ":50051", "address to listen on")
+	metricsAddr := flag.String("metrics-addr", ":9091", "address for HTTP /metrics and /debug/events")
 	nodeID := flag.String("id", "", "node ID (required or in config)")
 	configPath := flag.String("config", "", "path to cluster config file")
 	dataDir := flag.String("data-dir", "data", "directory for persistent data")
@@ -518,6 +524,8 @@ func main() {
 		logger.Error("failed to create log store", "error", err)
 		os.Exit(1)
 	}
+	liveBuffer := observability.NewLiveBuffer(10000)
+	metricsRegistry := observability.NewMetricsRegistry()
 	raftNode, err := raft.NewNode(raft.Config{
 		ID:           *nodeID,
 		Peers:        peerIDs,
@@ -526,6 +534,8 @@ func main() {
 		Store:        storage.NewFileTermVoteStore(filepath.Join(*dataDir, "termvote"), allNodes),
 		LogStore:     logStore,
 		StateMachine: sm,
+		EventSink:    liveBuffer,
+		Metrics:      metricsRegistry,
 	})
 	if err != nil {
 		logger.Error("failed to create raft node", "error", err)
@@ -535,6 +545,20 @@ func main() {
 		logger.Error("failed to start raft node", "error", err)
 		os.Exit(1)
 	}
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", observability.NewMetricsHandler(metricsRegistry))
+	metricsMux.Handle("/debug/events", observability.NewEventsHandler(liveBuffer))
+	httpServer := &http.Server{
+		Addr:    *metricsAddr,
+		Handler: metricsMux,
+	}
+	go func() {
+		logger.Info("starting HTTP metrics server", "addr", *metricsAddr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Warn("HTTP metrics server stopped", "error", err)
+		}
+	}()
 
 	srv := newServer(*nodeID, sm, raftNode, cfg, logger)
 
@@ -561,6 +585,9 @@ func main() {
 	sig := <-sigChan
 
 	logger.Info("shutting down raftkv-node server gracefully", "signal", sig.String())
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	_ = httpServer.Shutdown(shutdownCtx)
 	grpcServer.GracefulStop()
 	raftNode.Stop()
 	logger.Info("raftkv-node server stopped")

@@ -2,8 +2,11 @@ package raft
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
+	"raftkv/internal/observability"
 	raftv1 "raftkv/proto/raft/v1"
 )
 
@@ -37,6 +40,9 @@ func (n *Node) stepDownLocked(term uint64) bool {
 	n.notifyLocked(&n.readReadyNotifyCh)
 	n.notifyLocked(&n.applyNotifyCh)
 
+	outgoingRole := n.state.role
+	outgoingElectionTerm := n.state.electionTerm
+
 	if !n.persistLocked(term, "") {
 		return false
 	}
@@ -46,6 +52,22 @@ func (n *Node) stepDownLocked(term uint64) bool {
 	n.leaderNoOpIndex = 0
 	n.leaderNoOpTerm = 0
 	n.readReadyTerm = 0
+
+	if outgoingRole == Candidate && outgoingElectionTerm != 0 && n.metrics != nil {
+		n.metrics.ObserveElectionDuration(time.Since(n.electionStartTime).Seconds(), "abandoned")
+	}
+
+	if n.emitter != nil {
+		n.emitter.Emit(observability.TermAdvanced, "", "", term, n.lastLogIndexLocked(), map[string]string{
+			"old_term": fmt.Sprintf("%d", outgoingTerm),
+			"new_term": fmt.Sprintf("%d", term),
+		})
+		if outgoingRole == Leader {
+			n.emitter.Emit(observability.LeaderSteppedDown, "", "", term, n.lastLogIndexLocked(), map[string]string{
+				"reason": "higher_term",
+			})
+		}
+	}
 	return true
 }
 func (n *Node) startElection() {
@@ -55,6 +77,7 @@ func (n *Node) startElection() {
 		return
 	}
 	term := n.state.currentTerm + 1
+	oldTerm := n.state.currentTerm
 	if !n.persistLocked(term, n.cfg.ID) {
 		n.mu.Unlock()
 		return
@@ -62,6 +85,16 @@ func (n *Node) startElection() {
 	n.state.role = Candidate
 	n.state.leaderID = ""
 	n.state.electionTerm = term
+	n.electionStartTime = time.Now()
+
+	if n.emitter != nil {
+		n.emitter.Emit(observability.TermAdvanced, "", "", term, n.lastLogIndexLocked(), map[string]string{
+			"old_term": fmt.Sprintf("%d", oldTerm),
+			"new_term": fmt.Sprintf("%d", term),
+		})
+		n.emitter.Emit(observability.ElectionStarted, "", "", term, n.lastLogIndexLocked(), nil)
+	}
+
 	lastLogIdx := n.lastLogIndexLocked()
 	lastLogTerm := n.lastLogTermLocked()
 	peers := append([]string(nil), n.cfg.Peers...)
@@ -73,6 +106,7 @@ func (n *Node) startElection() {
 		n.mu.Lock()
 		if n.state.role == Candidate && n.state.electionTerm == term {
 			n.becomeLeaderLocked()
+			n.metrics.ObserveElectionDuration(time.Since(n.electionStartTime).Seconds(), "elected")
 		}
 		n.mu.Unlock()
 		n.sendHeartbeats()
@@ -80,30 +114,64 @@ func (n *Node) startElection() {
 		return
 	}
 	for _, peer := range peers {
+		correlationID := fmt.Sprintf("rv-%s-%d-%d", n.cfg.ID, term, time.Now().UnixNano())
 		ctx, cancel := context.WithTimeout(context.Background(), n.cfg.RPCTimeout)
 		resp, err := n.cfg.Transport.SendRequestVote(ctx, peer, &raftv1.RequestVoteRequest{
-			Term:         term,
-			CandidateId:  n.cfg.ID,
-			LastLogIndex: lastLogIdx,
-			LastLogTerm:  lastLogTerm,
+			Term:          term,
+			CandidateId:   n.cfg.ID,
+			LastLogIndex:  lastLogIdx,
+			LastLogTerm:   lastLogTerm,
+			CorrelationId: correlationID,
 		})
 		cancel()
+
+		// Reacquire n.mu before handling response (I-014: zero network I/O under n.mu)
+		n.mu.Lock()
+		if n.state.role != Candidate || n.state.electionTerm != term {
+			n.mu.Unlock()
+			return
+		}
 		if err != nil {
+			if n.emitter != nil {
+				n.emitter.Emit(observability.RPCFailed, peer, correlationID, term, lastLogIdx, map[string]string{
+					"rpc_type":    "RequestVote",
+					"peer":        peer,
+					"error_class": "network_error",
+				})
+			}
+			n.mu.Unlock()
 			continue
 		}
-		n.mu.Lock()
+
+		if n.emitter != nil {
+			n.emitter.Emit(observability.RPCSucceeded, peer, correlationID, term, lastLogIdx, map[string]string{
+				"rpc_type": "RequestVote",
+				"peer":     peer,
+			})
+		}
+
 		if n.handleRequestVoteResponseLocked(resp) {
 			votes++
 			if votes >= quorum {
 				n.becomeLeaderLocked()
+				n.metrics.ObserveElectionDuration(time.Since(n.electionStartTime).Seconds(), "elected")
 				n.mu.Unlock()
 				n.sendHeartbeats()
 				n.requestHeartbeatTimerReset()
 				return
 			}
+		} else if n.state.role != Candidate || n.state.electionTerm != term {
+			n.mu.Unlock()
+			return
 		}
 		n.mu.Unlock()
 	}
+
+	n.mu.Lock()
+	if n.state.role == Candidate && n.state.electionTerm == term {
+		n.metrics.ObserveElectionDuration(time.Since(n.electionStartTime).Seconds(), "lost")
+	}
+	n.mu.Unlock()
 }
 
 func (n *Node) becomeLeaderLocked() {
@@ -140,6 +208,13 @@ func (n *Node) becomeLeaderLocked() {
 	n.state.matchIndex[n.cfg.ID] = lastIdx
 
 	slog.Info("raft leader elected", "node_id", n.cfg.ID, "term", n.state.currentTerm)
+
+	if n.emitter != nil {
+		n.emitter.Emit(observability.LeaderElected, "", "", n.state.currentTerm, lastIdx, map[string]string{
+			"leader": n.cfg.ID,
+		})
+	}
+	n.metrics.IncLeaderChanges()
 
 	// Append exactly one NOOP entry for this leader term (I-023).
 	// Calls appendLocalEntryLocked directly under n.mu.
@@ -187,7 +262,18 @@ func (n *Node) RequestVote(ctx context.Context, req *raftv1.RequestVoteRequest) 
 		grant = true
 	}
 	if grant {
+		if n.emitter != nil {
+			n.emitter.Emit(observability.VoteGranted, req.CandidateId, req.CorrelationId, n.state.currentTerm, myLastLogIndex, map[string]string{
+				"candidate": req.CandidateId,
+			})
+		}
 		n.requestElectionTimerReset()
+	} else {
+		if n.emitter != nil {
+			n.emitter.Emit(observability.VoteRejected, req.CandidateId, req.CorrelationId, n.state.currentTerm, myLastLogIndex, map[string]string{
+				"candidate": req.CandidateId,
+			})
+		}
 	}
 	return &raftv1.RequestVoteResponse{Term: n.state.currentTerm, VoteGranted: grant}, nil
 }
