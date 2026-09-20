@@ -1,0 +1,39 @@
+{
+  "scenario_name": "held_out_slow_follower_45s",
+  "description": "Held-out Replication Latency: node-3 latency sustained for 45 seconds continuously",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00Z",
+      "node_id": "node-1",
+      "peer_id": "node-3",
+      "term": 0,
+      "log_index": 0,
+      "type": "RPC_FAILED",
+      "fields": {
+        "error_class": "timeout",
+        "peer": "node-3",
+        "rpc_type": "AppendEntries"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00002",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:45Z",
+      "node_id": "node-1",
+      "peer_id": "node-3",
+      "term": 0,
+      "log_index": 0,
+      "type": "RPC_FAILED",
+      "fields": {
+        "error_class": "timeout",
+        "peer": "node-3",
+        "rpc_type": "AppendEntries"
+      }
+    }
+  ],
+  "metrics": null
+}

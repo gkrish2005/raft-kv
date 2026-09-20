@@ -1,0 +1,30 @@
+{
+  "incident_type": "SLOW_FOLLOWER",
+  "severity": "MEDIUM",
+  "claims": [
+    {
+      "claim": "Slow follower replication lag and slow RPC sustained on node [node-3]",
+      "evidence_ids": [
+        "node-1/boot-1/00001",
+        "node-1/boot-1/00002"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Cluster telemetry indicates SLOW_FOLLOWER due to sustained disruption on [node-3]",
+      "evidence_ids": [
+        "node-1/boot-1/00001",
+        "node-1/boot-1/00002"
+      ],
+      "claim_type": "INFERENCE"
+    }
+  ],
+  "affected_nodes": [
+    "node-3"
+  ],
+  "consistency_impact": "COMMIT_PROGRESS_BLOCKED",
+  "recommended_actions": [
+    "Inspect cluster telemetry and logs"
+  ],
+  "confidence": 0.88
+}

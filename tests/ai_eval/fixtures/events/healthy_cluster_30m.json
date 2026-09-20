@@ -1,0 +1,870 @@
+{
+  "scenario_name": "healthy_cluster_30m",
+  "description": "30-minute healthy cluster operation at 10 req/sec with stable leadership and zero errors",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "NODE_STARTED"
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00002",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00.1Z",
+      "node_id": "node-1",
+      "term": 1,
+      "log_index": 0,
+      "type": "LEADER_ELECTED",
+      "fields": {
+        "leader": "node-1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00003",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00004",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:01:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00005",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:01:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00006",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:02:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00007",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:02:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00008",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:03:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00009",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:03:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00010",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:04:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00011",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:04:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00012",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:05:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00013",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:05:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00014",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:06:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00015",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:06:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00016",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:07:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00017",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:07:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00018",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:08:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00019",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:08:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00020",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:09:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00021",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:09:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00022",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:10:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00023",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:10:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00024",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:11:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00025",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:11:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00026",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:12:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00027",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:12:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00028",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:13:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00029",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:13:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00030",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:14:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00031",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:14:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00032",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:15:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00033",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:15:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00034",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:16:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00035",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:16:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00036",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:17:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00037",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:17:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00038",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:18:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00039",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:18:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00040",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:19:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00041",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:19:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00042",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:20:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00043",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:20:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00044",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:21:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00045",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:21:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00046",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:22:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00047",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:22:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00048",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:23:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00049",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:23:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00050",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:24:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00051",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:24:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00052",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:25:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00053",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:25:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00054",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:26:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00055",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:26:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00056",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:27:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00057",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:27:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00058",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:28:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00059",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:28:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00060",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:29:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00061",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:29:30Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00062",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:30:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "COMMIT_ADVANCED",
+      "fields": {
+        "new_index": "2",
+        "old_index": "1"
+      }
+    }
+  ],
+  "metrics": null
+}

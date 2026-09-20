@@ -1,0 +1,12 @@
+{
+  "scenario_name": "held_out_asymmetric_partition_5node",
+  "auditor": "developer (self-reviewed)",
+  "audited_at": "2026-09-20T14:00:00Z",
+  "claims": [
+    {
+      "claim_text": "Cluster telemetry indicates NETWORK_PARTITION due to sustained disruption on [node-4 node-5]",
+      "classification": "SUPPORTED",
+      "notes": "Directly follows from cited telemetry without extraneous assumptions"
+    }
+  ]
+}

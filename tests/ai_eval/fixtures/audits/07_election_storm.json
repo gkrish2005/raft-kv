@@ -1,0 +1,12 @@
+{
+  "scenario_name": "07_election_storm",
+  "auditor": "developer (self-reviewed)",
+  "audited_at": "2026-09-20T14:00:00Z",
+  "claims": [
+    {
+      "claim_text": "Cluster telemetry indicates ELECTION_STORM due to sustained disruption on [node-1 node-2 node-3]",
+      "classification": "SUPPORTED",
+      "notes": "Directly follows from cited telemetry without extraneous assumptions"
+    }
+  ]
+}

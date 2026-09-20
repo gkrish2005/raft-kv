@@ -1,0 +1,98 @@
+{
+  "scenario_name": "held_out_election_storm_7rounds",
+  "description": "Held-out Election Storm: 5-node cluster split across 7 consecutive failed election rounds",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-2/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:01Z",
+      "node_id": "node-2",
+      "term": 1,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-2"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-3/boot-1/00002",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:02Z",
+      "node_id": "node-3",
+      "term": 2,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-3"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-4/boot-1/00003",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:03Z",
+      "node_id": "node-4",
+      "term": 3,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-4"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-5/boot-1/00004",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:04Z",
+      "node_id": "node-5",
+      "term": 4,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-5"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00005",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:05Z",
+      "node_id": "node-1",
+      "term": 5,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-2/boot-1/00006",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:06Z",
+      "node_id": "node-2",
+      "term": 6,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-2"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-3/boot-1/00007",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:07Z",
+      "node_id": "node-3",
+      "term": 7,
+      "log_index": 0,
+      "type": "ELECTION_STARTED",
+      "fields": {
+        "candidate": "node-3"
+      }
+    }
+  ],
+  "metrics": null
+}

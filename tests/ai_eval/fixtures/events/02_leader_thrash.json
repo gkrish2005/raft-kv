@@ -1,0 +1,46 @@
+{
+  "scenario_name": "02_leader_thrash",
+  "description": "Rapid alternating leadership: \u003e=3 distinct leadership changes within 60 seconds",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00Z",
+      "node_id": "node-1",
+      "term": 1,
+      "log_index": 0,
+      "type": "LEADER_ELECTED",
+      "fields": {
+        "leader": "node-1"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-2/boot-1/00002",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:15Z",
+      "node_id": "node-2",
+      "term": 2,
+      "log_index": 0,
+      "type": "LEADER_ELECTED",
+      "fields": {
+        "leader": "node-2"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-3/boot-1/00003",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:35Z",
+      "node_id": "node-3",
+      "term": 3,
+      "log_index": 0,
+      "type": "LEADER_ELECTED",
+      "fields": {
+        "leader": "node-3"
+      }
+    }
+  ],
+  "metrics": null
+}

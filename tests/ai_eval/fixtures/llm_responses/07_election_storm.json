@@ -1,0 +1,38 @@
+{
+  "incident_type": "ELECTION_STORM",
+  "severity": "CRITICAL",
+  "claims": [
+    {
+      "claim": "Election storm detected across candidate nodes [node-1 node-2 node-3]",
+      "evidence_ids": [
+        "node-2/boot-1/00001",
+        "node-3/boot-1/00002",
+        "node-1/boot-1/00003",
+        "node-2/boot-1/00004",
+        "node-3/boot-1/00005"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Cluster telemetry indicates ELECTION_STORM due to sustained disruption on [node-1 node-2 node-3]",
+      "evidence_ids": [
+        "node-2/boot-1/00001",
+        "node-3/boot-1/00002",
+        "node-1/boot-1/00003",
+        "node-2/boot-1/00004",
+        "node-3/boot-1/00005"
+      ],
+      "claim_type": "INFERENCE"
+    }
+  ],
+  "affected_nodes": [
+    "node-1",
+    "node-2",
+    "node-3"
+  ],
+  "consistency_impact": "WRITES_UNAVAILABLE",
+  "recommended_actions": [
+    "Inspect cluster telemetry and logs"
+  ],
+  "confidence": 0.88
+}

@@ -1,0 +1,34 @@
+{
+  "scenario_name": "01_single_leader_crash",
+  "description": "Single leader crash followed by clean re-election with no further disruption",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-2/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00Z",
+      "node_id": "node-2",
+      "term": 1,
+      "log_index": 0,
+      "type": "LEADER_STEPPED_DOWN",
+      "fields": {
+        "leader": "node-2",
+        "reason": "crash"
+      }
+    },
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00002",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00.15Z",
+      "node_id": "node-1",
+      "term": 2,
+      "log_index": 0,
+      "type": "LEADER_ELECTED",
+      "fields": {
+        "leader": "node-1"
+      }
+    }
+  ],
+  "metrics": null
+}

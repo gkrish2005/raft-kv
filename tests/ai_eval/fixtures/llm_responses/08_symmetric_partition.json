@@ -1,0 +1,29 @@
+{
+  "incident_type": "NETWORK_PARTITION",
+  "severity": "HIGH",
+  "claims": [
+    {
+      "claim": "Network partition active with isolated peers [node-2 node-3]",
+      "evidence_ids": [
+        "node-1/boot-1/00001"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Cluster telemetry indicates NETWORK_PARTITION due to sustained disruption on [node-2 node-3]",
+      "evidence_ids": [
+        "node-1/boot-1/00001"
+      ],
+      "claim_type": "INFERENCE"
+    }
+  ],
+  "affected_nodes": [
+    "node-2",
+    "node-3"
+  ],
+  "consistency_impact": "WRITES_UNAVAILABLE",
+  "recommended_actions": [
+    "Inspect cluster telemetry and logs"
+  ],
+  "confidence": 0.88
+}

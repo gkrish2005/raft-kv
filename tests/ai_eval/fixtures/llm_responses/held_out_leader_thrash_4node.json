@@ -1,0 +1,37 @@
+{
+  "incident_type": "LEADER_INSTABILITY",
+  "severity": "HIGH",
+  "claims": [
+    {
+      "claim": "Leader change and leadership instability observed for nodes [node-1 node-2 node-3 node-4]",
+      "evidence_ids": [
+        "node-1/boot-1/00001",
+        "node-2/boot-1/00001",
+        "node-3/boot-1/00001",
+        "node-4/boot-1/00001"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Cluster telemetry indicates LEADER_INSTABILITY due to sustained disruption on [node-1 node-2 node-3 node-4]",
+      "evidence_ids": [
+        "node-1/boot-1/00001",
+        "node-2/boot-1/00001",
+        "node-3/boot-1/00001",
+        "node-4/boot-1/00001"
+      ],
+      "claim_type": "INFERENCE"
+    }
+  ],
+  "affected_nodes": [
+    "node-1",
+    "node-2",
+    "node-3",
+    "node-4"
+  ],
+  "consistency_impact": "WRITES_UNAVAILABLE",
+  "recommended_actions": [
+    "Inspect cluster telemetry and logs"
+  ],
+  "confidence": 0.88
+}

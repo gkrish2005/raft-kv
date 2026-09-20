@@ -14,6 +14,13 @@ build: proto
 	go build -o bin/raftkv-node ./cmd/raftkv-node
 	go build -o bin/raftkv-cli ./cmd/raftkv-cli
 	go build -o bin/raftkv-chaos ./cmd/raftkv-chaos
+	go build -o bin/ai-eval ./cmd/ai-eval
+
+ai-eval: build
+	@./bin/ai-eval --mode=$(or $(MODE),recorded) --out=docs/eval_report.md
+
+ai-eval-fixtures: build
+	@./bin/ai-eval --generate
 
 test:
 	go test ./...

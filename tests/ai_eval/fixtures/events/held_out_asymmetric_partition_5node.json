@@ -1,0 +1,20 @@
+{
+  "scenario_name": "held_out_asymmetric_partition_5node",
+  "description": "Held-out Partition: 5-node cluster with 2-node isolated minority (node-4, node-5)",
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "node-1/boot-1/00001",
+      "sequence": 0,
+      "timestamp": "2026-09-20T12:00:00Z",
+      "node_id": "node-1",
+      "term": 0,
+      "log_index": 0,
+      "type": "PARTITION_CREATED",
+      "fields": {
+        "peers": "node-4,node-5"
+      }
+    }
+  ],
+  "metrics": null
+}

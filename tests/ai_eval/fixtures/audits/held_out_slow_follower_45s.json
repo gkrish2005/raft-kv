@@ -1,0 +1,12 @@
+{
+  "scenario_name": "held_out_slow_follower_45s",
+  "auditor": "developer (self-reviewed)",
+  "audited_at": "2026-09-20T14:00:00Z",
+  "claims": [
+    {
+      "claim_text": "Cluster telemetry indicates SLOW_FOLLOWER due to sustained disruption on [node-3]",
+      "classification": "SUPPORTED",
+      "notes": "Directly follows from cited telemetry without extraneous assumptions"
+    }
+  ]
+}
