@@ -281,7 +281,7 @@ func RunScenarioLeaderCrash(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	IssueSyncWrite(t, leader, "k1", "v1", "req-1")
 
 	// Allow replication to majority
@@ -291,7 +291,7 @@ func RunScenarioLeaderCrash(t TestingT, baseDir string) {
 	c.CrashNode(leader.ID)
 
 	// Step 2: New leader elected among surviving quorum
-	newLeader := WaitForLeader(t, c, 3*time.Second, leader.ID)
+	newLeader := waitForStableClusterLeader(t, c, 3*time.Second)
 	if newLeader.ID == leader.ID {
 		t.Fatalf("crashed leader %s re-reported as leader", leader.ID)
 	}
@@ -319,7 +319,7 @@ func RunScenarioFollowerCrash(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	followerID := "node-2"
 	if leader.ID == followerID {
 		followerID = "node-3"
@@ -354,7 +354,7 @@ func RunScenarioMinorityPartition(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	minorityID := "node-2"
 	if leader.ID == minorityID {
 		minorityID = "node-3"
@@ -400,7 +400,7 @@ func RunScenarioMajorityPartitionHeals(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	oldLeaderID := leader.ID
 
 	// Step 1: Isolate leader completely
@@ -469,7 +469,7 @@ func RunScenarioSlowFollower_Catchup(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	slowID := "node-2"
 	if leader.ID == slowID {
 		slowID = "node-3"
@@ -505,7 +505,7 @@ func RunScenarioSlowFollower_RPCTimeout(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 	slowID := "node-2"
 	if leader.ID == slowID {
 		slowID = "node-3"
@@ -540,7 +540,7 @@ func RunScenarioStorageFailureFailClosed(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 
 	// Close the log store underneath the leader to inject an unrecoverable fsync/write failure
 	if closer, ok := leader.LogStore.(interface{ Close() error }); ok {
@@ -581,7 +581,7 @@ func RunScenarioMutexNetworkIOSafety(t TestingT, baseDir string) {
 	}
 	defer c.Stop()
 
-	leader := WaitForLeader(t, c, 3*time.Second)
+	leader := waitForStableClusterLeader(t, c, 3*time.Second)
 
 	// Inject a 200ms transport delay on all outbound RPCs
 	c.Transport().SetGlobalFault(TransportConfig{

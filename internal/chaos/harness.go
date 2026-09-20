@@ -156,6 +156,9 @@ func (c *InProcessCluster) Stop() {
 			n.Node.Stop()
 			n.Stopped = true
 		}
+		if closer, ok := n.LogStore.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
 	}
 }
 
@@ -169,6 +172,9 @@ func (c *InProcessCluster) CrashNode(id string) {
 	}
 	c.transport.UnregisterNode(id)
 	n.Node.Stop()
+	if closer, ok := n.LogStore.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 	n.Stopped = true
 }
 
@@ -182,6 +188,11 @@ func (c *InProcessCluster) RestartNode(id string) error {
 	}
 	if !n.Stopped {
 		return nil
+	}
+
+	// Defense-in-depth: ensure old LogStore is closed before reopening
+	if closer, ok := n.LogStore.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 
 	newCtx, err := c.createNodeContext(id, n.DataDir)
