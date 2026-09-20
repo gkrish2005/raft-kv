@@ -1,6 +1,7 @@
 package aieval
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -112,6 +113,106 @@ func LoadAuditFile(fixturesDir, scenarioName string) (*ScenarioAuditFile, error)
 		return nil, fmt.Errorf("failed to parse audit fixture %s: %w", path, err)
 	}
 	return &audit, nil
+}
+
+// CaptureLiveFixtures runs a live LLMClient against all scenario fixtures and writes raw LLMResponses.
+func CaptureLiveFixtures(ctx context.Context, fixturesDir string, client ai.LLMClient) error {
+	llmDir := filepath.Join(fixturesDir, "llm_responses")
+	if err := os.MkdirAll(llmDir, 0755); err != nil {
+		return err
+	}
+
+	ruleEngine := ai.NewDeterministicRuleEngine()
+	cases := AllEvaluationCases()
+
+	for _, c := range cases {
+		if c.IsHealthyControl {
+			continue
+		}
+		telem, err := LoadTelemetryFixture(fixturesDir, c.ScenarioName)
+		if err != nil {
+			return fmt.Errorf("failed to load telemetry for %s: %w", c.ScenarioName, err)
+		}
+
+		cand := ruleEngine.Evaluate(telem.Events, telem.Metrics)
+		input := ai.DiagnosisInput{
+			Events:              telem.Events,
+			Metrics:             telem.Metrics,
+			RuleEngineCandidate: cand,
+		}
+
+		resp, err := client.Analyze(ctx, input)
+		if err != nil {
+			return fmt.Errorf("live LLM call failed for %s: %w", c.ScenarioName, err)
+		}
+
+		respBytes, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(llmDir, c.ScenarioName+".json")
+		if err := os.WriteFile(path, respBytes, 0644); err != nil {
+			return err
+		}
+		fmt.Printf("Captured live response for %s -> %s\n", c.ScenarioName, path)
+	}
+	return nil
+}
+
+// DumpAuditTemplates evaluates recorded responses, finds all accepted INFERENCE claims,
+// and creates draft audit templates in auditsDir with classification set to PENDING_AUDIT.
+func DumpAuditTemplates(fixturesDir string) error {
+	auditsDir := filepath.Join(fixturesDir, "audits")
+	if err := os.MkdirAll(auditsDir, 0755); err != nil {
+		return err
+	}
+
+	cases := AllEvaluationCases()
+	for _, c := range cases {
+		if c.IsHealthyControl {
+			continue
+		}
+		telem, err := LoadTelemetryFixture(fixturesDir, c.ScenarioName)
+		if err != nil {
+			continue
+		}
+		llmResp, err := LoadRecordedLLMResponse(fixturesDir, c.ScenarioName)
+		if err != nil {
+			continue
+		}
+
+		inc, err := ai.ValidateLLMResponse(*llmResp, telem.Events, ai.Hybrid)
+		if err != nil || inc == nil {
+			continue
+		}
+
+		auditFile := ScenarioAuditFile{
+			ScenarioName: c.ScenarioName,
+			Auditor:      "developer (self-reviewed)",
+			AuditedAt:    time.Now().UTC(),
+		}
+
+		for _, cl := range inc.Claims {
+			if cl.ClaimType == ai.Inference {
+				auditFile.Claims = append(auditFile.Claims, InferenceClaimAudit{
+					ClaimText:      cl.Claim,
+					Classification: "PENDING_AUDIT",
+					Notes:          "Fill in classification: SUPPORTED | UNSUPPORTED | UNCERTAIN",
+				})
+			}
+		}
+
+		if len(auditFile.Claims) > 0 {
+			path := filepath.Join(auditsDir, c.ScenarioName+".json")
+			existing, _ := LoadAuditFile(fixturesDir, c.ScenarioName)
+			if existing == nil {
+				auditBytes, _ := json.MarshalIndent(auditFile, "", "  ")
+				_ = os.WriteFile(path, auditBytes, 0644)
+				fmt.Printf("Created draft audit template: %s\n", path)
+			}
+		}
+	}
+	return nil
 }
 
 func buildTelemetryForCase(c EvalCase) ScenarioTelemetry {

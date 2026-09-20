@@ -162,4 +162,13 @@ func TestAIEval_PendingAuditDoesNotCrash(t *testing.T) {
 			t.Errorf("expected PENDING_AUDIT status when audit files missing, got %s", r.AuditStatus)
 		}
 	}
+
+	report := aieval.CalculateReport("recorded", results, "evaluation latency")
+	md := aieval.FormatReportMarkdown(report)
+	if !strings.Contains(md, "`N/A` (no evaluable INFERENCE claims / audit pending)") {
+		t.Errorf("expected `N/A` for 0/0 unsupported claim rate, got report:\n%s", md)
+	}
+	if strings.Contains(md, "0.00%") && strings.Contains(md, "Inference Unsupported-Claim Rate: 0.00%") {
+		t.Errorf("0/0 must never render as 0.00%%")
+	}
 }

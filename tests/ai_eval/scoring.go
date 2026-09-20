@@ -101,6 +101,7 @@ func CalculateReport(mode string, results []EvalResult, latencyLabel string) Eva
 	// unsupported_claim_rate = count(UNSUPPORTED) / (count(SUPPORTED) + count(UNSUPPORTED))
 	// UNCERTAIN is explicitly excluded from the denominator.
 	evaluableClaims := totalSupported + totalUnsupported
+	report.EvaluableInferenceClaims = evaluableClaims
 	if evaluableClaims > 0 {
 		report.UnsupportedClaimRate = float64(totalUnsupported) / float64(evaluableClaims) * 100.0
 	} else {
@@ -108,6 +109,7 @@ func CalculateReport(mode string, results []EvalResult, latencyLabel string) Eva
 	}
 
 	totalReviewedClaims := totalSupported + totalUnsupported + totalUncertain
+	report.TotalInferenceClaimsReviewed = totalReviewedClaims
 	if totalReviewedClaims > 0 {
 		report.UncertainClaimFraction = float64(totalUncertain) / float64(totalReviewedClaims) * 100.0
 	}
@@ -156,8 +158,16 @@ func FormatReportMarkdown(report EvalReport) string {
 
 	sb.WriteString("\n## Unsupported-Claim Rate (Inference Claim Audit)\n\n")
 	sb.WriteString("> **Methodology Note (docs/ai-design.md):** `OBSERVATION` claims are mechanically checked with 0% unsupported claims by construction (validator rejects on failure). `INFERENCE` claims are evaluated via a manual audit by a single self-reviewer against a three-way rubric (`SUPPORTED`, `UNSUPPORTED`, `UNCERTAIN`). `UNCERTAIN` claims are explicitly excluded from the denominator of the unsupported rate.\n\n")
-	sb.WriteString(fmt.Sprintf("- **Inference Unsupported-Claim Rate:** `%.2f%%` (Formula: `count(UNSUPPORTED) / (count(SUPPORTED) + count(UNSUPPORTED))`)\n", report.UnsupportedClaimRate))
-	sb.WriteString(fmt.Sprintf("- **Uncertain Claims Fraction:** `%.2f%%` (reported separately, excluded from unsupported denominator)\n\n", report.UncertainClaimFraction))
+	if report.EvaluableInferenceClaims == 0 {
+		sb.WriteString("- **Inference Unsupported-Claim Rate:** `N/A` (no evaluable INFERENCE claims / audit pending)\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("- **Inference Unsupported-Claim Rate:** `%.2f%%` (Formula: `count(UNSUPPORTED) / (count(SUPPORTED) + count(UNSUPPORTED))`)\n", report.UnsupportedClaimRate))
+	}
+	if report.TotalInferenceClaimsReviewed == 0 {
+		sb.WriteString("- **Uncertain Claims Fraction:** `N/A` (no claims reviewed)\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("- **Uncertain Claims Fraction:** `%.2f%%` (reported separately, excluded from unsupported denominator)\n\n", report.UncertainClaimFraction))
+	}
 
 	sb.WriteString("## Confidence Calibration\n\n")
 	sb.WriteString("| Confidence Bucket | Sample Count | Correct Diagnoses | Accuracy |\n")

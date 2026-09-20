@@ -22,6 +22,12 @@ ai-eval: build
 ai-eval-fixtures: build
 	@./bin/ai-eval --generate
 
+ai-eval-capture: build
+	@./bin/ai-eval --capture --api-key=$(API_KEY) --model=$(or $(MODEL),gemini-2.5-flash)
+
+ai-eval-audit-dump: build
+	@./bin/ai-eval --dump-audit
+
 test:
 	go test ./...
 

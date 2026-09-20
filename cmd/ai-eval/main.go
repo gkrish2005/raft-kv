@@ -13,17 +13,46 @@ import (
 func main() {
 	mode := flag.String("mode", "recorded", "Evaluation mode: recorded (official), rules, or live")
 	fixturesDir := flag.String("fixtures", "tests/ai_eval/fixtures", "Directory containing evaluation fixtures")
-	generate := flag.Bool("generate", false, "Generate all evaluation fixtures into fixtures directory")
+	generate := flag.Bool("generate", false, "Generate synthetic evaluation telemetry fixtures")
+	capture := flag.Bool("capture", false, "Run live LLM to capture genuine raw model responses into fixtures/llm_responses")
+	dumpAudit := flag.Bool("dump-audit", false, "Extract accepted INFERENCE claims and create draft audit templates (PENDING_AUDIT)")
+	apiKey := flag.String("api-key", "", "Google Gemini API key (or read from GEMINI_API_KEY)")
+	model := flag.String("model", "gemini-2.5-flash", "Gemini model name")
 	outReport := flag.String("out", "", "Optional path to write markdown evaluation report")
 	flag.Parse()
 
 	if *generate {
-		fmt.Printf("Generating evaluation fixtures in %s...\n", *fixturesDir)
+		fmt.Printf("Generating evaluation telemetry fixtures in %s...\n", *fixturesDir)
 		if err := aieval.GenerateAllFixtures(*fixturesDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error generating fixtures: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Fixtures generated successfully.")
+		fmt.Println("Telemetry fixtures generated successfully.")
+		return
+	}
+
+	if *capture {
+		fmt.Printf("Capturing genuine live LLM responses using model %s into %s...\n", *model, *fixturesDir)
+		client, err := aieval.NewGeminiLiveClient(*apiKey, *model)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing Gemini client: %v\n", err)
+			os.Exit(1)
+		}
+		if err := aieval.CaptureLiveFixtures(context.Background(), *fixturesDir, client); err != nil {
+			fmt.Fprintf(os.Stderr, "Error capturing live fixtures: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Live responses captured successfully.")
+		return
+	}
+
+	if *dumpAudit {
+		fmt.Printf("Dumping draft INFERENCE audit templates into %s/audits...\n", *fixturesDir)
+		if err := aieval.DumpAuditTemplates(*fixturesDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error dumping audit templates: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Draft audit templates created.")
 		return
 	}
 

@@ -83,16 +83,18 @@ type BucketStats struct {
 // EvalReport aggregates the results across all evaluated cases.
 type EvalReport struct {
 	Mode                   string        // "rules", "recorded", "live"
-	TotalScenarios         int
-	PrimaryScenarios       int
-	HeldOutScenarios       int
-	ClassificationAccuracy float64       // count(Correct) / TotalScenarios
-	SeverityAccuracy       float64       // count(SeverityCorrect) / TotalScenarios (distinct metric)
-	NodeAccuracy           float64       // count(NodesCorrect) / TotalScenarios
-	AcceptedEvidenceValid  float64       // Hard 100% on accepted incidents
-	LLMRejectionRate       float64       // count(LLMEvidenceRejected) / TotalScenarios
-	UnsupportedClaimRate   float64       // count(UNSUPPORTED) / (count(SUPPORTED) + count(UNSUPPORTED))
-	UncertainClaimFraction float64       // count(UNCERTAIN) / total reviewed claims
+	TotalScenarios               int
+	PrimaryScenarios             int
+	HeldOutScenarios             int
+	ClassificationAccuracy       float64 // count(Correct) / TotalScenarios
+	SeverityAccuracy             float64 // count(SeverityCorrect) / TotalScenarios (distinct metric)
+	NodeAccuracy                 float64 // count(NodesCorrect) / TotalScenarios
+	AcceptedEvidenceValid        float64 // Hard 100% on accepted incidents
+	LLMRejectionRate             float64 // count(LLMEvidenceRejected) / TotalScenarios
+	TotalInferenceClaimsReviewed int
+	EvaluableInferenceClaims     int
+	UnsupportedClaimRate         float64 // count(UNSUPPORTED) / (count(SUPPORTED) + count(UNSUPPORTED))
+	UncertainClaimFraction       float64 // count(UNCERTAIN) / total reviewed claims
 	FalsePositiveCount     int           // 0 required on 30m healthy control
 	FalseNegativeCount     int
 	CalibrationBuckets     map[string]BucketStats // [0-0.5), [0.5-0.8), [0.8-1.0]
