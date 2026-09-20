@@ -29,8 +29,8 @@ applies across all phases.
 | 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
 | 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
 | 6 | Chaos Testing Framework | ✅ Approved for next phase (2026-09-18) |
-| **7** | **Observability** | ✅ Approved for next phase (2026-09-19) |
-| 8 | Evidence-Grounded Incident Diagnosis | Not started |
+| 7 | Observability | ✅ Approved for next phase (2026-09-19) |
+| **8** | **Evidence-Grounded Incident Diagnosis** | ✅ Approved for next phase (2026-09-20) |
 | 9 | AI Evaluation | Not started |
 | 10 | Benchmarking, Hardening & Final Demo | Not started |
 
@@ -107,71 +107,77 @@ Real ungraceful crash tests (Tests 51 and 52) run on `ProcessCluster` using real
 **Post-approval fix (2026-09-19):** In `internal/chaos/scenarios.go`, hardened `findProcessLeader` to utilize `LeaderHint` returned by follower nodes instead of blind round-robin polling; updated `issueProcessSyncWrite` to record `lastErr` when leader discovery fails; increased write and convergence timeouts in `RunScenarioRollingCrash` from 7s/8s to 10s/12s to accommodate OS process spawn and SIGKILL latency overhead under `-race`. This eliminated pre-existing intermittent timeout flakiness in `TestScenarioRollingCrash_10x` under `-race` (unrelated to Phase 7 instrumentation).
 Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in repo (2026-09-18).
 
+### Phase 7 — Observability
+**Status:** Approved for next phase (2026-09-19)
+Turned chaos into structured, machine-readable telemetry per the exact `ClusterEvent`/`MetricSnapshot` schema and 14-transition matrix in `docs/architecture.md`. Implemented one-way `EventSink` interface boundary (I-015), `BootID`-gated startup persistence (I-020), atomic lock-free `Histogram` with percentiles, and Prometheus `/metrics` exporter (Rule 32). Created bounded lossy `LiveBuffer` (10k events) and lossless `ScenarioRecorder` generating replayable JSON fixtures.
+**Pass 3/4 fixes:** Defect #1: `election_duration` histogram wired for `outcome="abandoned"` on higher-term step-down; Defect #2: Touchpoint 2b wired for `outcome="abandoned"` when candidate receives same-term `AppendEntries`.
+**Verification fixes (2026-09-19):** Fixed missing `LogStore.Close()` WAL file descriptor leak on `InProcessCluster.Stop()`; audited and migrated 8 test-harness synchronization sites in `internal/chaos/scenarios.go` from `WaitForLeader` to `waitForStableClusterLeader` (verifying `ReadReadyTerm == Term` gate) to eliminate latent leader election race.
+Verified: `go vet` clean; `go test -race -count=1 -timeout 300s ./...` green across all packages (2026-09-19).
+
 ---
 
 ## Current Phase (full detail)
 
-### Phase 7 — Observability
-**Status:** Approved for next phase (2026-09-19)
+### Phase 8 — Evidence-Grounded Incident Diagnosis (Rules + LLM)
+**Status:** ✅ Approved for next phase (2026-09-20)
 
-**Goal:** Turn chaos into structured, machine-readable telemetry per the exact `ClusterEvent`/`MetricSnapshot` schema and event-coverage matrix in `docs/architecture.md` — the foundation the AI layer (Phase 8) depends on — with an explicit failure policy so observability can never affect Raft correctness.
+**Goal:** Build the AI layer per `docs/ai-design.md`: deterministic rules first, optional LLM refinement on top, structurally read-only, fully asynchronous to the client path, with the validator (not the LLM) as the authority on evidence content.
 
 **Invariants touched:**
-- `I-015`: Strong architectural boundary between Raft/consensus and AI/observability (enforced by one-way `EventSink` interface; `internal/observability` has zero imports of concrete `internal/raft`/`storage`/`cluster` types).
-- `I-020`: `BootID`-gated startup; no events may be emitted until `BootID` is durably persisted via `TermVoteStore`.
-- `I-014` / Rule 32: Observability must never block or break Raft correctness; failed emissions are dropped and metric-counted; `/metrics` scrape endpoint must never acquire the Raft mutex.
-- Rule 23: `internal/ai` never imports Raft/storage/cluster; `internal/observability` depends only on `EventSink` interface.
-- Rule 24: AI/observability path is fully asynchronous and read-only.
-- Rule 37: `ClusterEvent.Sequence` is in-memory only per boot and resets on restart. Cross-restart identity comes from `BootID`.
+- `I-015` / Rule 23: Strict architectural boundary — `internal/ai` never imports `internal/raft`, `internal/storage`, or `internal/cluster`. Enforced by compile-time AST import linter (`imports_test.go`).
+- `I-014` / Rule 24: Structurally read-only and fully asynchronous — AI worker reads from `LiveBuffer.Snapshot()` and releases the buffer mutex before invoking diagnosis; zero mutex coupling or latency impact on consensus or client request path.
+- Rule 25: Evidence grounding — every accepted `AIIncident`'s evidence resolves to a real `EventID` in the supplied telemetry window, mechanically validated by the validator (never authored/asserted by the LLM).
+- Rule 26: `OBSERVATION` vs `INFERENCE` distinction strictly enforced; `OBSERVATION` claims require both entity and semantic match against cited events; anti-circularity rule guarantees failed observations are rejected and never silently reclassified as inferences.
+- Rule 27: Robust fail-open behavior — LLM unavailability, timeouts, parse errors, or validation rejections fall back to deterministic rule-engine incidents or nil with zero cluster impact.
 
 #### Pass 1 — Design ✅ (approved)
-- Designed structured telemetry schemas (`ClusterEvent`, `MetricSnapshot`), frozen vocabularies, and 14 transition mappings.
-- Extended Rule 34 lock hierarchy: `n.mu` → `sm.mu` → `observability.mu`.
-- Designed atomic lock-free `Histogram` with percentiles and reserved `read_latency` for Phase 10.
-- Clarified RPC emission timing: `RPC_FAILED`/`RPC_SUCCEEDED` emitted strictly after `n.mu` reacquisition (I-014).
+- Designed enums and structs in `internal/ai/incident.go` (`IncidentType`, `Severity`, `Source`, `ClaimType`, `ConsistencyImpact`, `AIIncident`, `DiagnosisClaim`, `EvidenceRef`).
+- Designed `DeterministicRuleEngine` with 6 concrete rules matching Phase 9 evaluation parameters.
+- Designed `LLMClient` interface and `FakeLLM` mock supporting all 11 robustness table conditions.
+- Designed mechanical validator pipeline (`SanitizeTelemetry`, `CanonicalNodeBearingFields`, `CheckObservationDerivability`, `ValidateLLMResponse`, `CandidateToIncident`).
+- Designed AST import linter (`imports_test.go`) enforcing `I-015`.
 
 #### Pass 2 — Implement ✅
-- Created `internal/observability/events.go`: `ClusterEventSchemaVersion = 1`, `ClusterEvent` struct, 17 `EventType`s, validation with bounds and `target` field exclusion, `EventSink` interface, `EventEmitter` with monotonic sequence and `<NodeID>/boot-<BootID>/%05d` `EventID`.
-- Created `internal/observability/sinks.go`: `LiveBuffer` (10k bounded ring buffer, lossy, `events_dropped_total`), `ScenarioRecorder` (lossless, JSON fixture export/load), `MultiSink` (panic-recovery isolation).
-- Created `internal/observability/metrics.go`: `MetricSnapshot`, frozen metric vocabulary, atomic `Histogram` with linear percentile interpolation, `MetricsRegistry` with non-blocking atomic operations.
-- Created `internal/observability/exporter.go`: HTTP handlers for `/metrics` (Prometheus format) and `/debug/events` (JSON array snapshot).
-- Created unit and concurrency tests in `internal/observability/{events,sinks,metrics}_test.go`.
-- Instrumented call-sites in `internal/raft/{node,election,replication,commit,apply}.go`, `internal/chaos/faults.go`, `cmd/raftkv-node/main.go`, and `cmd/raftkv-cli/main.go`.
-- Added `TestObservability_14TransitionsMatrix` and `TestObservability_GenerateFixtures` in `internal/chaos/observability_test.go`, generating replayable JSON fixtures in `testdata/fixtures/`.
+- Created `internal/ai/incident.go`: Enums, structs, `FormatIncident` with required notices (`ConfidenceNotice` and `RecommendedActionsNotice`).
+- Created `internal/ai/rules.go`: `DeterministicRuleEngine` with `ElectionStormRule` (≥5 rounds), `LeaderInstabilityRule` (thrash ≥3 changes/60s and single crash/re-election), `NetworkPartitionRule`, `NodeUnreachableRule` (≥3 consecutive RPC failures), `SlowFollowerRule` (≥30s lag), and `ReplicationLagRule` (<30s lag).
+- Created `internal/ai/llm_client.go`: `LLMClient` interface and `FakeLLM` mock.
+- Created `internal/ai/validator.go`: Mechanical validation pipeline with ingest sanitization, non-emptiness guards, enum checks, evidence resolution, observation derivability, and affected nodes grounding.
+- Created `internal/ai/worker.go`: `DiagnosticsEngine` and in-process `AIWorker`.
+- Created tests in `internal/ai/{imports,incident,rules,llm_client,validator,worker}_test.go`.
 
 #### Pass 3 — Audit ✅
-- Verified I-014/Rule 16: `RPC_FAILED`/`RPC_SUCCEEDED` emitted strictly after `n.mu` reacquisition.
-- Verified I-015/Rule 23: Zero imports of `internal/raft`, `internal/storage`, or `internal/cluster` in `internal/observability`.
-- Verified I-020/Rule 36: `EventEmitter` initialized strictly after `Recover()` durably persists `BootID`.
-- Verified Rule 32: `/metrics` reads atomics/histograms without acquiring `n.mu`. `MultiSink` recovers panics so faulty sinks cannot affect Raft.
-- Verified Rule 34: Lock ordering `n.mu` → `sm.mu` → `observability.mu` maintained across all call sites.
-- Verified Rule 37: `ClusterEvent.Sequence` is in-memory only per boot; cross-boot identity is `(BootID, Sequence)`.
-- Verified I-007: Traced all three call-sites of `persistLocked` outward, proving all four term-change touchpoints + self-election route through `stepDownLocked` / `startElection` and emit `TERM_ADVANCED`. Added `TestHigherTermAllFourTouchpointsEmitTermAdvanced` (PASS under `-race`).
-- Verified field bounds: Max 10 fields, 64-byte key, 512-byte value match `docs/architecture.md` line 164.
-- Identified Defect #1: `election_duration` histogram omitted `outcome="abandoned"`.
-- Identified Defect #2: Touchpoint 2b omitted `outcome="abandoned"` when candidate receives same-term `AppendEntries`.
+- Traced `AIWorker` call path to `LiveBuffer.Snapshot()`, confirming `b.mu` is released before `Diagnose()` runs, proving consensus and the Raft mutex can never be blocked by AI diagnosis.
+- Confirmed `EventID` resolution is a strict hash-map lookup against the supplied telemetry window.
+- Verified AST linter enforces `I-015` compile-time import separation.
+- Identified Finding 1: `CheckObservationDerivability` had an OR-logic bypass where entity match alone accepted an observation claim without semantic verification.
+- Identified Finding 2: `SlowFollowerRule` and `ReplicationLagRule` metric evaluation fell back to `events[0].EventID` when no peer event was found, causing `AffectedNodes` evidence-binding rejection (fail-closed recall issue).
+- Identified Finding 3: `LeaderInstabilityRule` single-election branch fired on clean initial cluster bootstrap at term 1 without preceding instability indicators.
 
 #### Pass 4 — Fix ✅
-- **Defect #1 (`election_duration` "abandoned" omitted on higher-term step-down)**:
-  - *Before*: `election_duration` histogram only recorded `elected` and `lost`; stepping down upon discovering a higher term recorded nothing. `startTime` was an unshared local variable in `startElection()`, and `startElection()` did not exit early when stepped down mid-election.
-  - *After*: Added `electionStartTime` to `Node` in `node.go`. Wired `n.metrics.ObserveElectionDuration(..., "abandoned")` into `stepDownLocked` when `outgoingRole == Candidate && outgoingElectionTerm != 0`. Added early-exit checks in `startElection()`'s peer loop and post-response handling (`if n.state.role != Candidate || n.state.electionTerm != term { return }`), and guarded `lost` with `role == Candidate && electionTerm == term` to ensure mutually exclusive single-recording.
-- **Defect #2 (Touchpoint 2b: same-term leader AppendEntries omitted "abandoned")**:
-  - *Before*: In `replication.go:232`, a candidate receiving `AppendEntries` from a legitimate leader in the same term (`req.Term == currentTerm`) set `role = Follower`, but left `electionTerm` non-zero and recorded zero metric observation (`abandoned` was not observed).
-  - *After*: Added check `if n.state.role == Candidate && n.state.electionTerm != 0` in `replication.go:232`: records `n.metrics.ObserveElectionDuration(..., "abandoned")` and resets `n.state.electionTerm = 0` before setting `role = Follower`.
+- **Finding 1 (`CheckObservationDerivability` OR-logic bypass)**:
+  - *Before*: `CheckObservationDerivability` returned `true` if `entityMatched || semanticMatched`. A claim asserting a hallucinated event ("power supply caught fire") citing a node passed derivability solely because the node ID was present.
+  - *After*: Changed condition in `validator.go` to require `entityMatched && semanticMatched`. Updated `ElectionStormRule` template to explicitly include participating nodes so rule-generated claims satisfy both entity and semantic matches. Added safe default tokenizing `e.Type` and inspecting `e.Fields` for unlisted event types. Added regression test `TestValidator_ObservationDerivability_EntityAloneDoesNotSatisfy`.
+- **Finding 2 (Ungrounded metric-lag fallback to `events[0]`)**:
+  - *Before*: In `SlowFollowerRule` and `ReplicationLagRule`, when replication lag was detected via `MetricSnapshot` but no event matched `peer`, code fell back to `evidenceIDs = append(evidenceIDs, events[0].EventID)`. If `events[0]` was emitted by an unrelated node, `ValidateLLMResponse` rejected the incident under the `AffectedNodes` grounding check.
+  - *After*: Removed the `events[0]` fallback in both rules. Only cite events that genuinely match `peer` in canonical node-bearing fields. If no supporting event exists, the rule returns `nil`. Added regression test `TestRules_MetricLag_DoesNotCiteUnrelatedEvent`.
+- **Finding 3 (`LeaderInstabilityRule` clean initial bootstrap election false positive)**:
+  - *Before*: `LeaderInstabilityRule` evaluated every `LeaderElected` event and fired `LOW` severity on single elections, falsely flagging clean initial cluster bootstrap at term 1 as an instability incident.
+  - *After*: Added `hasInstabilityIndicator` check in `rules.go` verifying the election is at `Term > 1` or preceded by `LEADER_STEPPED_DOWN`, `NODE_STOPPED`, or `TERM_ADVANCED`. Clean term-1 initial startup now returns `nil`. Added regression test `TestRules_InitialStartupElection_NotClassifiedAsInstability`.
 
 #### Pass 5 — Verify ✅
-- Added `TestElectionDurationOutcome_AbandonedAndNoDoubleRecord` in `internal/raft/election_test.go` exercising all 8 outcome branches under `-race` (Touchpoint 3 abandoned, Touchpoint 1 abandoned, Touchpoint 2a abandoned, Touchpoint 2b abandoned, pure timeout lost with zero peer responses, higher-term abandoned mid-election without double recording, denied-votes lost, and quorum elected).
-- Added `TestObservability_ConcurrentCandidateHigherTermAppendEntries_Abandoned` in `internal/chaos/observability_test.go` providing genuine chaos-level coverage for Touchpoint 2a (candidate receives higher-term `AppendEntries` from newly elected leader, records `abandoned`, and steps down to Follower).
-  - *Audit & Iteration Note:* Attempts to force same-term timing (Touchpoint 2b) under real goroutine scheduling were found to be vulnerable to goroutine scheduling delay under parallel full-suite `-race` load (where restarted node-1 could time out and bump terms before node-2 completed election). Per developer instruction, the chaos test was explicitly renamed to `TestObservability_ConcurrentCandidateHigherTermAppendEntries_Abandoned` to accurately describe its coverage (Touchpoint 2a under real concurrency), while Touchpoint 2b remains covered deterministically at the unit level in `internal/raft/election_test.go:347` (`touchpoint 2b: incoming AppendEntries from same-term leader mid-election records abandoned exactly once`).
-- Full-suite race run: `go test -race -count=1 -timeout 300s ./...` 100% green across all packages.
+- Revert-and-fail verification: Each of the three Pass 4 fixes was temporarily reverted in the working tree and its regression test executed, confirming that each test fails with the expected failure mode against pre-fix code (zero vacuous passes):
+  - Reverting Fix 1: `TestValidator_ObservationDerivability_EntityAloneDoesNotSatisfy` failed with `expected rejection: claim with entity match but semantic mismatch must fail derivability`.
+  - Reverting Fix 2: `TestRules_MetricLag_DoesNotCiteUnrelatedEvent` failed with `Finding 2 regression: rule cited unrelated event node-1/boot-1/00001 for peer node-2`.
+  - Reverting Fix 3: `TestRules_InitialStartupElection_NotClassifiedAsInstability` failed with `Finding 3 regression: clean initial startup at term 1 classified as instability`.
+- Full-suite race verification: 3 independent back-to-back invocations of `go test -race -count=1 -timeout 300s ./...` passed 100% green across all packages with zero data races. A 4th post-verification full-suite run confirmed the working tree remains clean.
 - Static analysis: `go vet ./...` clean (0 warnings, 0 errors).
-- All 6 exit criteria in `docs/phases/phase-07.md` verified.
+- All 6 exit criteria in `docs/phases/phase-08.md` verified.
+
+> **Note on commit history:** The entire `internal/ai/` implementation (rule engine, mechanical validator, LLM client/worker, three Pass 4 audit fixes, and regression tests) was developed and verified across Passes 1–5 while uncommitted, and was committed as a single standalone commit (`af814ca`) at Pass 5 close on 2026-09-20 rather than incrementally alongside each pass.
 
 ---
 
 ## Upcoming Phases
-7. Observability
-8. Evidence-Grounded Incident Diagnosis (Rules + LLM)
 9. AI Evaluation
 10. Benchmarking, Hardening & Final Demo
 
@@ -261,6 +267,7 @@ two different things, tracked separately.)*
 | I-012 | 1 | yes | Save-before-grant and save-before-outgoing-RequestVote. |
 | I-013 | 2 | yes | Follower fsync before ACK; delayed-fsync test. |
 | I-014 | 1, **6** | yes | RPCs sent after releasing Raft mutex. Verified on real Raft nodes with concurrent mutex availability probes under 200ms delay: Test 50 (`ScenarioMutexNetworkIOSafety_10x`). |
+| I-015 | 7, **8** | yes | Strong AI/Raft architectural boundary. Phase 7: one-way `EventSink` interface. Phase 8: `internal/ai` AST import linter (`imports_test.go`) strictly enforcing zero imports of `internal/raft`, `internal/storage`, or `internal/cluster`; async non-blocking structural test (`worker_test.go`). |
 | I-016 | 3 | yes | Full 3-step linearizable read; regression-tested after Phase 4 `server.Get` fix. |
 | I-017 | **5** | yes | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Real Raft code-path proof: Test 33 (`dedup_test.go`, real Raft apply loop) and Tests 35–36 (Level 4 subprocess tests). Unit: Tests 30–32, 34. |
 | I-018 | 2 | yes | Fail-closed on durable write failure; disk-before-memory ordering. |
