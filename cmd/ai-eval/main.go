@@ -17,7 +17,7 @@ func main() {
 	capture := flag.Bool("capture", false, "Run live LLM to capture genuine raw model responses into fixtures/llm_responses")
 	dumpAudit := flag.Bool("dump-audit", false, "Extract accepted INFERENCE claims and create draft audit templates (PENDING_AUDIT)")
 	apiKey := flag.String("api-key", "", "Google Gemini API key (or read from GEMINI_API_KEY)")
-	model := flag.String("model", "gemini-2.5-flash", "Gemini model name")
+	model := flag.String("model", "gemini-3.5-flash-lite", "Gemini model name")
 	outReport := flag.String("out", "", "Optional path to write markdown evaluation report")
 	flag.Parse()
 

@@ -3,7 +3,7 @@
   "severity": "MEDIUM",
   "claims": [
     {
-      "claim": "Node unreachable: repeated RPC fail and timeout to node [node-3]",
+      "claim": "Node node-3 encountered 3 consecutive AppendEntries RPC failures with connection_refused error from node-1",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-1/boot-1/00002",
@@ -12,7 +12,7 @@
       "claim_type": "OBSERVATION"
     },
     {
-      "claim": "Cluster telemetry indicates NODE_UNREACHABLE due to sustained disruption on [node-3]",
+      "claim": "Node node-3 is currently unreachable due to network or process failure preventing consensus replication",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-1/boot-1/00002",
@@ -26,7 +26,8 @@
   ],
   "consistency_impact": "COMMIT_PROGRESS_BLOCKED",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Verify process status and host reachability for node node-3",
+    "Check transport error logs for connection drops or timeouts"
   ],
-  "confidence": 0.88
+  "confidence": 0.85
 }

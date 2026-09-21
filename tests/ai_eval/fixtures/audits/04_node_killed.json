@@ -1,12 +1,12 @@
 {
   "scenario_name": "04_node_killed",
   "auditor": "developer (self-reviewed)",
-  "audited_at": "2026-09-20T14:00:00Z",
+  "audited_at": "2026-09-20T19:30:00.536314Z",
   "claims": [
     {
-      "claim_text": "Cluster telemetry indicates NODE_UNREACHABLE due to sustained disruption on [node-3]",
-      "classification": "SUPPORTED",
-      "notes": "Directly follows from cited telemetry without extraneous assumptions"
+      "claim_text": "Node node-3 is currently unreachable due to network or process failure preventing consensus replication",
+      "classification": "PENDING_AUDIT",
+      "notes": "Fill in classification: SUPPORTED | UNSUPPORTED | UNCERTAIN"
     }
   ]
 }

@@ -3,7 +3,7 @@
   "severity": "CRITICAL",
   "claims": [
     {
-      "claim": "Election storm detected across candidate nodes [node-1 node-2 node-3 node-4 node-5]",
+      "claim": "Election storm detected across nodes [node-1, node-2, node-3, node-4, node-5]: 7 consecutive failed election rounds across terms 1-7 with no leader established",
       "evidence_ids": [
         "node-2/boot-1/00001",
         "node-3/boot-1/00002",
@@ -14,19 +14,6 @@
         "node-3/boot-1/00007"
       ],
       "claim_type": "OBSERVATION"
-    },
-    {
-      "claim": "Cluster telemetry indicates ELECTION_STORM due to sustained disruption on [node-1 node-2 node-3 node-4 node-5]",
-      "evidence_ids": [
-        "node-2/boot-1/00001",
-        "node-3/boot-1/00002",
-        "node-4/boot-1/00003",
-        "node-5/boot-1/00004",
-        "node-1/boot-1/00005",
-        "node-2/boot-1/00006",
-        "node-3/boot-1/00007"
-      ],
-      "claim_type": "INFERENCE"
     }
   ],
   "affected_nodes": [
@@ -38,7 +25,8 @@
   ],
   "consistency_impact": "WRITES_UNAVAILABLE",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Inspect cluster connectivity and network partitions preventing quorum",
+    "Check for conflicting election timeouts or split votes among nodes"
   ],
-  "confidence": 0.88
+  "confidence": 0.95
 }

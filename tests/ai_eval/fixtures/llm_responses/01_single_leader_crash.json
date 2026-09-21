@@ -3,28 +3,28 @@
   "severity": "LOW",
   "claims": [
     {
-      "claim": "Leader change and leadership instability observed for nodes [node-1]",
+      "claim": "Leader node-2 stepped down due to crash",
       "evidence_ids": [
-        "node-2/boot-1/00001",
-        "node-1/boot-1/00002"
+        "node-2/boot-1/00001"
       ],
       "claim_type": "OBSERVATION"
     },
     {
-      "claim": "Cluster telemetry indicates LEADER_INSTABILITY due to sustained disruption on [node-1]",
+      "claim": "Leader change observed: node node-1 elected leader at term 2",
       "evidence_ids": [
-        "node-2/boot-1/00001",
         "node-1/boot-1/00002"
       ],
-      "claim_type": "INFERENCE"
+      "claim_type": "OBSERVATION"
     }
   ],
   "affected_nodes": [
+    "node-2",
     "node-1"
   ],
   "consistency_impact": "NONE",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Monitor newly elected leader for stable heartbeat progression",
+    "Investigate node-2 crash reason and ensure recovery"
   ],
-  "confidence": 0.88
+  "confidence": 0.85
 }

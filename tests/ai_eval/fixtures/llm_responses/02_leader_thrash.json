@@ -3,22 +3,13 @@
   "severity": "HIGH",
   "claims": [
     {
-      "claim": "Leader change and leadership instability observed for nodes [node-1 node-2 node-3]",
+      "claim": "Rapid leadership changes observed across node-1, node-2, and node-3 in terms 1, 2, and 3",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-2/boot-1/00002",
         "node-3/boot-1/00003"
       ],
       "claim_type": "OBSERVATION"
-    },
-    {
-      "claim": "Cluster telemetry indicates LEADER_INSTABILITY due to sustained disruption on [node-1 node-2 node-3]",
-      "evidence_ids": [
-        "node-1/boot-1/00001",
-        "node-2/boot-1/00002",
-        "node-3/boot-1/00003"
-      ],
-      "claim_type": "INFERENCE"
     }
   ],
   "affected_nodes": [
@@ -28,7 +19,8 @@
   ],
   "consistency_impact": "WRITES_UNAVAILABLE",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Check heartbeat network latency and election timeout configurations",
+    "Inspect node CPU / disk stalls causing false leader timeouts"
   ],
-  "confidence": 0.88
+  "confidence": 0.9
 }

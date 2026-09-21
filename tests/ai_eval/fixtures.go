@@ -181,9 +181,19 @@ func DumpAuditTemplates(fixturesDir string) error {
 			continue
 		}
 
+		path := filepath.Join(auditsDir, c.ScenarioName+".json")
 		inc, err := ai.ValidateLLMResponse(*llmResp, telem.Events, ai.Hybrid)
 		if err != nil || inc == nil {
+			_ = os.Remove(path)
 			continue
+		}
+
+		existing, _ := LoadAuditFile(fixturesDir, c.ScenarioName)
+		existingMap := make(map[string]InferenceClaimAudit)
+		if existing != nil {
+			for _, cl := range existing.Claims {
+				existingMap[cl.ClaimText] = cl
+			}
 		}
 
 		auditFile := ScenarioAuditFile{
@@ -194,22 +204,24 @@ func DumpAuditTemplates(fixturesDir string) error {
 
 		for _, cl := range inc.Claims {
 			if cl.ClaimType == ai.Inference {
-				auditFile.Claims = append(auditFile.Claims, InferenceClaimAudit{
-					ClaimText:      cl.Claim,
-					Classification: "PENDING_AUDIT",
-					Notes:          "Fill in classification: SUPPORTED | UNSUPPORTED | UNCERTAIN",
-				})
+				if prev, ok := existingMap[cl.Claim]; ok && prev.Classification != "" && prev.Classification != "PENDING_AUDIT" {
+					auditFile.Claims = append(auditFile.Claims, prev)
+				} else {
+					auditFile.Claims = append(auditFile.Claims, InferenceClaimAudit{
+						ClaimText:      cl.Claim,
+						Classification: "PENDING_AUDIT",
+						Notes:          "Fill in classification: SUPPORTED | UNSUPPORTED | UNCERTAIN",
+					})
+				}
 			}
 		}
 
 		if len(auditFile.Claims) > 0 {
-			path := filepath.Join(auditsDir, c.ScenarioName+".json")
-			existing, _ := LoadAuditFile(fixturesDir, c.ScenarioName)
-			if existing == nil {
-				auditBytes, _ := json.MarshalIndent(auditFile, "", "  ")
-				_ = os.WriteFile(path, auditBytes, 0644)
-				fmt.Printf("Created draft audit template: %s\n", path)
-			}
+			auditBytes, _ := json.MarshalIndent(auditFile, "", "  ")
+			_ = os.WriteFile(path, auditBytes, 0644)
+			fmt.Printf("Created draft audit template: %s\n", path)
+		} else {
+			_ = os.Remove(path)
 		}
 	}
 	return nil

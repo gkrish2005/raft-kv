@@ -1,12 +1,12 @@
 {
   "scenario_name": "05_replication_lag_low",
   "auditor": "developer (self-reviewed)",
-  "audited_at": "2026-09-20T14:00:00Z",
+  "audited_at": "2026-09-20T19:30:00.537537Z",
   "claims": [
     {
-      "claim_text": "Cluster telemetry indicates REPLICATION_LAG due to sustained disruption on [node-2]",
-      "classification": "SUPPORTED",
-      "notes": "Directly follows from cited telemetry without extraneous assumptions"
+      "claim_text": "Follower node-2 is falling behind due to repeated communication failures with the leader",
+      "classification": "PENDING_AUDIT",
+      "notes": "Fill in classification: SUPPORTED | UNSUPPORTED | UNCERTAIN"
     }
   ]
 }

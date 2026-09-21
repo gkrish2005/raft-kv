@@ -3,7 +3,7 @@
   "severity": "LOW",
   "claims": [
     {
-      "claim": "Follower replication lag and slow RPC detected on node [node-2]",
+      "claim": "Leader node-1 experienced AppendEntries RPC timeouts targeting peer node-2",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-1/boot-1/00002"
@@ -11,7 +11,7 @@
       "claim_type": "OBSERVATION"
     },
     {
-      "claim": "Cluster telemetry indicates REPLICATION_LAG due to sustained disruption on [node-2]",
+      "claim": "Follower node-2 is falling behind due to repeated communication failures with the leader",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-1/boot-1/00002"
@@ -24,7 +24,8 @@
   ],
   "consistency_impact": "NONE",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Monitor network connectivity between node-1 and node-2",
+    "Check for resource exhaustion on follower node-2"
   ],
-  "confidence": 0.88
+  "confidence": 0.8
 }

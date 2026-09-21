@@ -3,17 +3,35 @@
   "severity": "HIGH",
   "claims": [
     {
-      "claim": "Leader change and leadership instability observed for nodes [node-1 node-2 node-3 node-4]",
+      "claim": "Node-1 was elected leader at term 1",
       "evidence_ids": [
-        "node-1/boot-1/00001",
-        "node-2/boot-1/00001",
-        "node-3/boot-1/00001",
+        "node-1/boot-1/00001"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Node-2 was elected leader at term 2",
+      "evidence_ids": [
+        "node-2/boot-1/00001"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Node-3 was elected leader at term 3",
+      "evidence_ids": [
+        "node-3/boot-1/00001"
+      ],
+      "claim_type": "OBSERVATION"
+    },
+    {
+      "claim": "Node-4 was elected leader at term 4",
+      "evidence_ids": [
         "node-4/boot-1/00001"
       ],
       "claim_type": "OBSERVATION"
     },
     {
-      "claim": "Cluster telemetry indicates LEADER_INSTABILITY due to sustained disruption on [node-1 node-2 node-3 node-4]",
+      "claim": "Rapid leadership thrash: 4 distinct leadership changes observed within 30 seconds across node-1, node-2, node-3, and node-4",
       "evidence_ids": [
         "node-1/boot-1/00001",
         "node-2/boot-1/00001",
@@ -31,7 +49,8 @@
   ],
   "consistency_impact": "WRITES_UNAVAILABLE",
   "recommended_actions": [
-    "Inspect cluster telemetry and logs"
+    "Check heartbeat network latency and election timeout configurations",
+    "Inspect node CPU / disk stalls causing false leader timeouts"
   ],
-  "confidence": 0.88
+  "confidence": 0.9
 }

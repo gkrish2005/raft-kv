@@ -167,13 +167,31 @@ func RunEvaluation(ctx context.Context, cfg RunnerConfig, cases []EvalCase) ([]E
 			}
 		}
 
+		// Count OBSERVATION vs INFERENCE claims in accepted incident
+		if res.AcceptedIncident != nil {
+			for _, cl := range res.AcceptedIncident.Claims {
+				if cl.ClaimType == ai.Observation {
+					res.ObservationClaimsCount++
+				} else if cl.ClaimType == ai.Inference {
+					res.InferenceClaimsCount++
+				}
+			}
+		}
+
 		// Ingest manual INFERENCE claim audit if present
 		auditFile, err := LoadAuditFile(cfg.FixturesDir, c.ScenarioName)
 		if err != nil {
 			return nil, fmt.Errorf("error loading audit file for %s: %w", c.ScenarioName, err)
 		}
-		if auditFile != nil {
-			res.AuditStatus = "COMPLETED"
+
+		if res.LLMEvidenceRejected {
+			res.AuditStatus = "REJECTED (Fallback)"
+		} else if c.IsHealthyControl {
+			res.AuditStatus = "NONE (Healthy Control)"
+		} else if res.InferenceClaimsCount == 0 {
+			res.AuditStatus = "NONE (OBS-only)"
+		} else if auditFile != nil {
+			hasPending := false
 			for _, cl := range auditFile.Claims {
 				switch cl.Classification {
 				case ClaimSupported:
@@ -182,7 +200,14 @@ func RunEvaluation(ctx context.Context, cfg RunnerConfig, cases []EvalCase) ([]E
 					res.UnsupportedClaims++
 				case ClaimUncertain:
 					res.UncertainClaims++
+				default:
+					hasPending = true
 				}
+			}
+			if hasPending {
+				res.AuditStatus = "PENDING_AUDIT"
+			} else {
+				res.AuditStatus = "COMPLETED"
 			}
 		} else {
 			res.AuditStatus = "PENDING_AUDIT"

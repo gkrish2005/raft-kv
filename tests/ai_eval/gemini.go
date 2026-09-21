@@ -29,7 +29,7 @@ func NewGeminiLiveClient(apiKey, model string) (*GeminiLiveClient, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY is not set in environment or flag")
 	}
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.5-flash-lite"
 	}
 	return &GeminiLiveClient{
 		APIKey: apiKey,
