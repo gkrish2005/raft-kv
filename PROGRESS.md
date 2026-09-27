@@ -1,582 +1,304 @@
-<div align="center">
+# RaftKV — Progress
 
-# RaftKV
+Source of truth for "what's actually done" vs. what the phase docs plan. Update this
+after every pass (Design/Implement/Audit/Fix/Verify), not just at phase completion.
+Nothing gets checked off here unless Pass 5 actually verified it — this file should
+never be ahead of reality.
 
-**A persistent, Raft-consensus-based distributed key-value store, built from scratch in Go.**
+**Structure of this file:** completed, developer-approved phases are compressed into
+short checkpoint summaries (§ Completed Phases). The active phase gets full pass-by-pass
+detail (§ Current Phase). Not-started phases are listed by name only (§ Upcoming Phases).
+Cross-cutting tracking (open questions, invariant coverage) lives at the bottom and
+applies across all phases.
 
-Deterministic fault-injection testing · WAL-based crash recovery · replicated idempotent writes · quorum-confirmed linearizable reads · an evidence-grounded AI incident-diagnosis layer structurally isolated from consensus.
-
-![Go](https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white)
-![Consensus](https://img.shields.io/badge/consensus-Raft%20(from%20scratch)-orange?style=flat-square)
-![RPC](https://img.shields.io/badge/rpc-gRPC%20%2B%20Protobuf-4285F4?style=flat-square)
-![Status](https://img.shields.io/badge/status-in%20development-yellow?style=flat-square)
-![Testing](https://img.shields.io/badge/testing-5--level%20deterministic%20suite-brightgreen?style=flat-square)
-
-</div>
-
-> **Status:** 🚧 Actively implemented and tested. Phases 0–8 are complete and developer-approved; Phase 9 (AI Evaluation) is in progress. **[`PROGRESS.md`](PROGRESS.md) is the authoritative, pass-by-pass record of what's actually built and verified** — this README describes the target architecture and design; PROGRESS.md tracks day-to-day reality and may be ahead of what's reflected here.
-
----
-
-## At a Glance
-
-| | |
-|---|---|
-| 🧠 **Consensus** | Raft, implemented from scratch (no `hashicorp/raft`, no `etcd/raft`) — see [ADR-002](docs/adr/002-raft-from-scratch.md) |
-| 🛡️ **Safety invariants** | 24, canonically IDed `I-001`–`I-024` — all 24 currently have a passing test (see `PROGRESS.md`'s invariant coverage tracker) |
-| 🧪 **Test hierarchy** | 5 levels — deterministic unit tests through OS-level chaos — all exercised and race-clean through Phase 8 |
-| 🗺️ **Implementation phases** | 11 total — Phases 0–8 approved, Phase 9 (AI Evaluation) in progress, Phase 10 not started |
-| 📜 **Architecture Decision Records** | 9, doubling as interview material |
-| 🤖 **AI evaluation** | 8 primary + 4 held-out anti-circularity scenarios; 0 evidence-validator rejections across live-LLM-backed runs so far |
-| 💥 **Chaos scenarios** | 11 named deterministic scenarios (including real `SIGKILL` process-crash tests), plus a seeded 30-minute randomized fuzzer |
-| 🎯 **Primary purpose** | Interview artifact (SDE / backend / distributed systems) + a readable, test-covered Raft reference |
+## How to read this file
+- **Phase status**: Not started / Design approved / In progress / Pass 5 complete / Approved for next phase
+- A phase is only "Approved for next phase" once the developer (not the agent) explicitly
+  signs off per `AGENTS.md`'s phase discipline rule 5.
 
 ---
 
-## Table of Contents
-
-- [Why This Project](#why-this-project)
-- [What Makes This Different](#what-makes-this-different)
-- [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
-- [Client API](#client-api)
-- [Core Safety Guarantees](#core-safety-guarantees)
-- [Failure Model & Non-Guarantees](#failure-model--non-guarantees)
-- [The AI Layer — Read-Only, Evidence-Grounded](#the-ai-layer--read-only-evidence-grounded)
-- [Testing Strategy](#testing-strategy)
-- [Key Design Decisions](#key-design-decisions)
-- [Project Status](#project-status)
-- [Phase Roadmap](#phase-roadmap)
-- [Known Limitations (By Design)](#known-limitations-by-design)
-- [Repository Layout](#repository-layout)
-- [Documentation Map](#documentation-map)
-- [Development Workflow](#development-workflow)
-- [Non-Goals](#non-goals)
-- [Getting Started](#getting-started)
-- [License](#license)
-
----
-
-## Why This Project
-
-Most portfolio "distributed systems" projects are either a REST API glued onto a database, or a Raft implementation that has never actually been made to survive a killed leader, a network partition, or a crash-restart.
-
-**RaftKV closes that gap.** Every safety, recovery, and consistency claim this project makes is backed by a canonical invariant ID (`docs/invariants.md`), a targeted test designed to fail if that property is violated, and — where applicable — a chaos scenario that exercises it under adversarial conditions.
-
-**Core use cases:**
-- Normal writes/reads against a 3–5 node cluster
-- Leader crash → automatic election
-- Network partition → provable minority-cannot-commit behavior
-- Node crash → WAL recovery and rejoin
-- Operator (or the AI layer) diagnoses cluster health from structured telemetry alone
-
----
-
-## What Makes This Different
-
-Getting past leader election into **WAL persistence + crash recovery + chaos-proven fault tolerance + a correctly-specified linearizable read path** is exactly where most student Raft implementations stop short. Two places in particular are where the "obvious" implementation is subtly wrong — and where this project's own documentation and audit history record *why* the correct version looks the way it does:
-
-1. **The read-barrier + new-leader no-op requirement.** Quorum leadership confirmation alone does not make a read safe — a freshly elected leader's `commitIndex` can still be behind what was actually committed before it, and the fix (`I-023`) has to be an explicit gate, not an implicit side effect of the ordinary read barrier.
-2. **The replicated-dedup design.** A local per-node dedup cache cannot survive a leader crashing between commit and client-ack — deduplication has to live in the replicated state machine itself (`I-017`).
-
-The AI diagnosis layer is not a chatbot bolted onto logs — it never touches consensus, never sees raw logs, and reasons only over a typed, versioned telemetry schema that a deterministic rule engine partially interprets first. Its architectural boundary is enforced by a compile-time AST import linter, not a code-review convention.
-
----
-
-## Tech Stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Language | **Go** | Goroutines make the concurrency model natural to express, mitigated by an explicit single-mutex-per-node discipline |
-| RPC | **gRPC + Protocol Buffers** | Typed RPC contracts "for free" — the project's value is demonstrating protocol correctness, not inventing a wire format |
-| Persistence | **Custom length-prefixed, checksummed WAL** | Full control over the crash-consistency contract (`docs/adr/003-wal-design.md`) |
-| Testing | **Injectable `Clock`/`Transport` + single-threaded simulator** | Deterministic, sub-millisecond, 100+-repeat tests instead of flaky real-timer tests (`docs/adr/006-deterministic-testing.md`) |
-| AI layer | **In-process rule engine + optional LLM** (evaluated live against Gemini in Phase 9) | No separate service/IPC surface to build or document; the architectural boundary is compile-time, not deployment-time (`docs/ai-design.md`) |
-
-Full rationale for each choice — including rejected alternatives — lives in [`docs/adr/`](docs/adr/).
-
----
-
-## Architecture
-
-### System overview
-
-```mermaid
-flowchart TD
-    C[Client] --> API["Client API<br/>retry · leader routing · RequestID"]
-    API --> Raft["Raft Core<br/>election · replication · commit · read barrier"]
-    Raft --> N1[Node 1]
-    Raft --> N2[Node 2]
-    Raft --> N3[Node 3]
-    N1 --> W1[(WAL)]
-    N2 --> W2[(WAL)]
-    N3 --> W3[(WAL)]
-    N1 --> SM["State Machine<br/>KV + Replicated RequestTable"]
-    N2 --> SM
-    N3 --> SM
-    SM -.->|"emits one-way"| ES[EventSink]
-    ES --> TEL["Structured Telemetry<br/>ClusterEvent / MetricSnapshot"]
-    TEL --> RE["Rule Engine<br/>(deterministic, always runs)"]
-    RE --> LLM["Optional LLM<br/>(read-only · fail-open · async)"]
-    LLM --> EV["Evidence Validator<br/>(authoritative — not the LLM)"]
-    EV --> INC[AIIncident]
-```
-
-### The hard architectural boundary — dependency direction
-
-```mermaid
-flowchart LR
-    Raft -->|emits into| EventSink((EventSink interface))
-    Storage -->|emits into| EventSink
-    Cluster -->|emits into| EventSink
-    EventSink -->|implemented by| Observability
-    Observability -->|"typed ClusterEvent / MetricSnapshot slices only"| AI
-```
-
-`internal/observability` depends **only** on the `EventSink` interface — never a concrete `Node`/`StateMachine`/`Storage` type. `internal/ai` depends **only** on `internal/observability`'s typed surface. This is a compile-time, structurally-enforced property (`I-015`) — checked in CI via `internal/ai`'s AST import linter (`imports_test.go`), not a code-review convention.
-
-### The critical path is synchronous; AI is not
-
-```
-Client request → Raft → commit/apply → respond to client        (synchronous, on the critical path)
-                              │
-                              └──► emit ClusterEvent → Observability → AI   (fully async, never blocking)
-```
-
-A client write or read **never** waits on the AI layer, for any reason — verified structurally in Phase 8, including a test that terminates the in-process AI worker mid-chaos-scenario and confirms zero effect on cluster operation.
-
-### Linearizable read protocol
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant L as Leader
-    participant F as Followers (quorum)
-    C->>L: GET(key)
-    L->>F: Heartbeat round (same replication lane as ordinary log replication)
-    F-->>L: Majority ACK — leadership confirmed
-    L->>L: readReadyTerm == currentTerm? (else block/retry — I-023)
-    L->>L: capture ReadBarrier{Term, CommitIndex}
-    L->>L: wait until lastApplied >= barrier.CommitIndex
-    L->>L: Raft mutex → StateMachine mutex, re-validate role & term
-    Note over L: Linearization point (I-016)
-    L->>L: read local KV state (same locked section)
-    L-->>C: value
-```
-
-### Concurrency model
-
-| State | Owner | Lock |
-|---|---|---|
-| `currentTerm`, `votedFor`, `log[]`, `commitIndex`, `lastApplied`, `role` | Raft state | Raft mutex |
-| `nextIndex[]` / `matchIndex[]`, `readReadyTerm`, `leaderNoOpIndex` | Leader-only volatile | Raft mutex |
-| `KV`, `RequestTable` | State machine | `StateMachine.RWMutex` (write on apply, read on `GET`) |
-
-**Fixed lock order, never reversed:** Raft mutex → StateMachine mutex. This is what makes the read protocol's linearization point (`I-016`) actually true rather than just documented — no write can land in the gap between "revalidated I'm still leader" and "read the KV state." Disk I/O is intentionally allowed under the Raft mutex (a documented MVP trade-off, [ADR-005](docs/adr/005-concurrency-model.md)); network I/O never is (`I-014`, verified under real concurrent-mutex-availability probes in Phase 6).
-
-<details>
-<summary><b>Frozen constants & vocabularies</b> (click to expand)</summary>
-
-| Constant | Value |
-|---|---|
-| Heartbeat interval | `50ms` |
-| Election timeout | randomized in `[250ms, 400ms]` per attempt |
-| Quorum | `⌊N/2⌋ + 1` (3 nodes → 2, 5 nodes → 3) |
-| Max key size | 1 KB |
-| Max value size | 256 KB |
-| Max single command size | ~257 KB |
-| Max WAL record size | 1 MiB |
-| Max entries per AppendEntries batch | 1000, or a byte-size cap, whichever binds first |
-| Frozen metric names | `leader_changes_total`, `append_entries_failures_total`, `replication_lag`, `commit_latency`, `election_duration`, `node_up` |
-
-These are frozen deliberately (`docs/architecture.md`) so an AI coding tool — or a second engineer — can't independently pick different values across files.
-
-</details>
-
----
-
-## Client API
-
-```go
-Set(key, value, request_id) -> SUCCESS | error
-Delete(key, request_id)     -> SUCCESS | error
-Get(key)                    -> value, found
-ClusterStatus()             -> {leader, term, nodes: [{id, role, lastContact}]}
-```
-
-<details>
-<summary><b>Result semantics</b> (click to expand)</summary>
-
-| Result | Meaning | Retry? |
-|---|---|---|
-| `SUCCESS` | Command definitely committed and applied | No |
-| `NOT_LEADER` | Not the leader; response includes a `leader_hint` if known | Yes, against the hinted leader |
-| `NO_LEADER` | No known leader; response includes a `retry_after` hint | Yes, with backoff |
-| `TIMEOUT` | **Outcome unknown** — including the case where the entry was superseded before commit | **Yes, with the SAME `request_id`** |
-| `INVALID_REQUEST` | Malformed or oversized request | No |
-| `REQUEST_ID_REUSED` | Same `request_id`, different payload (compared by hash) | No |
-| `OVERLOADED` | Leader has too many outstanding writes in flight | Yes, with backoff |
-
-**The critical rule:** `TIMEOUT` is never treated as a failure. A client library built against this API never needs to distinguish "true timeout" from "my write got superseded" — both produce `TIMEOUT`, and the safe response is identical: retry with the same `request_id`.
-
-</details>
-
----
-
-## Core Safety Guarantees
-
-RaftKV enforces **24 canonical invariants** (`docs/invariants.md`) — 8 classic Raft safety proofs plus 16 implementation-specific safety properties unique to this codebase. **All 24 currently have a passing test** — see `PROGRESS.md`'s invariant coverage tracker for the exact test/phase mapping. Selected highlights:
-
-| ID | Guarantee |
-|---|---|
-| `I-001`–`I-008` | The core Raft safety proofs: Election Safety, Leader Append-Only, Log Matching, Leader Completeness, State Machine Safety, Current-Term Commit Rule, Term Monotonicity, minority-cannot-independently-commit |
-| `I-012` / `I-020` / `I-024` | `currentTerm`/`votedFor`/`bootID` are durably, atomically persisted (temp-file → fsync → rename → directory-fsync) — corrupt or ambiguous state on disk means the node **refuses to start**, never guesses |
-| `I-013` / `I-018` | A follower's write only counts once its *own* WAL fsync completes; any durable-write failure fails the node **closed** (no ACK, no vote, no commit advance) |
-| `I-016` | A linearizable read requires quorum leadership confirmation **+** an apply-barrier wait **+** term/role revalidation performed under the StateMachine lock, immediately before returning |
-| `I-019` | Write completion is **request-identity-aware**, never index-only — a client write never resolves `SUCCESS` just because its original log index got applied by *someone else's* entry |
-| `I-021` | Stale/out-of-order AppendEntries responses are rejected via `role == Leader` + `term == currentTerm` + a per-follower monotonic attempt counter — the at-most-one-in-flight rule alone is *not* sufficient |
-| `I-023` | A newly elected leader commits **and applies** a no-op entry in its own current term — gated by an explicit `readReadyTerm` marker — before serving *any* linearizable read |
-
-<details>
-<summary><b>Full invariant table (I-001 – I-024)</b> (click to expand)</summary>
-
-**Raft safety invariants** (from the Raft paper's own correctness argument):
-
-| ID | Invariant | Statement |
-|---|---|---|
-| I-001 | Election Safety | At most one leader per term |
-| I-002 | Leader Append-Only | A leader never overwrites or deletes entries in its own log — only appends |
-| I-003 | Log Matching | Same index + term ⇒ identical entries, and all preceding entries also identical |
-| I-004 | Leader Completeness | A committed entry from term T appears in every leader's log for all terms > T |
-| I-005 | State Machine Safety | If two nodes applied an entry at the same index, it's the same entry |
-| I-006 | Current-Term Commit Rule | A leader only concludes commitment via majority replication for its **current**-term entries |
-| I-007 | Term Monotonicity | `currentTerm` never decreases, on any of the four term-change touchpoints |
-| I-008 | Minority Cannot Independently Advance Commit | A minority partition cannot establish new commitment on its own |
-
-**Implementation safety properties** (must hold in this codebase specifically):
-
-| ID | Property |
-|---|---|
-| I-009 | `lastApplied ≤ commitIndex`, always |
-| I-010 | `commitIndex ≤ lastLogIndex`, always |
-| I-011 | Committed entries are never truncated |
-| I-012 | `currentTerm`/`votedFor` durable, persisted together atomically, before any dependent RPC |
-| I-013 | A follower's replication only counts after its own WAL fsync completes |
-| I-014 | No network I/O — direct or indirect — while holding the Raft mutex |
-| I-015 | The AI layer cannot mutate Raft state, WAL, KV state, or trigger elections/restarts/kills |
-| I-016 | A linearizable read requires quorum confirmation + barrier wait + term/role revalidation |
-| I-017 | A duplicate `RequestID` with a different payload is rejected, never silently resolved |
-| I-018 | Storage durability failure ⇒ the node fails closed |
-| I-019 | A pending write never resolves `SUCCESS` solely because its original index became applied |
-| I-020 | Corrupt or ambiguous durable term/vote state causes startup failure, never guessed recovery |
-| I-021 | A stale or out-of-order AppendEntries response is never applied to `nextIndex`/`matchIndex` |
-| I-022 | `commitIndex`/`lastApplied` are monotonic non-decreasing during normal execution |
-| I-023 | A new leader commits+applies a current-term no-op before serving any linearizable read |
-| I-024 | `TermVoteStore` record replacement is crash-atomic; an orphaned temp file is never promoted |
-
-Every ID has a defined enforcement mechanism and a passing test — `PROGRESS.md`'s invariant coverage tracker is the exhaustive, continuously-updated source of truth for exactly which phase implemented it and which test proves it.
-
-</details>
-
----
-
-## Failure Model & Non-Guarantees
-
-**Assumptions:** an asynchronous, unreliable network (messages may be delayed, dropped, duplicated, or reordered); crash-stop/omission node failures. Correctness never depends on any assumed bound on message latency.
-
-**Explicitly out of scope:** Byzantine failures, disk corruption beyond what CRC32 can detect, and any cross-node clock-synchronization assumption.
-
-**What this system does *not* guarantee:**
-- Exactly-once client delivery — it guarantees **at-most-once state-machine effect per `RequestID`**, a precise and weaker claim than "exactly-once," and a more honest one
-- Availability without a leader that can reach a quorum (deliberate **CP**, not **AP**, per CAP)
-- Byzantine fault tolerance
-- Durability stronger than the underlying filesystem's own fsync guarantees
-
-**Failure matrix (abridged):**
-
-| Failure | Quorum reachable? | Writes | Reads | Outcome |
-|---|---|---|---|---|
-| Follower crash | Yes | Continue | Continue | Unaffected |
-| Leader crash | Yes | Brief interruption | Brief interruption | New leader eventually elected (convergence time *measured*, never promised as a fixed bound) |
-| Minority partition (1 of 3, 2 of 5) | Yes | Continue on majority | Continue on majority | Minority cannot independently commit (`I-008`) |
-| Majority partition (2 of 3, 3 of 5) | No | Fail/block | Fail/block | CP behavior — no side has a leader-reachable quorum |
-| AI/LLM service down | Yes (unrelated) | Unaffected | Unaffected | AI diagnosis unavailable only — fully async |
-
-Full assumptions, safety-vs-liveness framing, and resource bounds in [`docs/failure-model.md`](docs/failure-model.md).
-
----
-
-## The AI Layer — Read-Only, Evidence-Grounded
-
-```mermaid
-flowchart TD
-    T["ClusterEvent / MetricSnapshot slices"] --> RE["Deterministic rule engine<br/>(always runs, 6 rules)"]
-    RE --> CAND{Candidate incident?}
-    CAND --> LLM["Optional LLM refinement<br/>(read-only · fail-open · async)"]
-    LLM --> VAL["Evidence Validator<br/>AUTHORITATIVE — not the LLM"]
-    VAL --> INC[AIIncident]
-```
-
-**Design principles:**
-
-- 🔒 **Structurally read-only.** `internal/ai` has no import path to `internal/raft`, `internal/storage`, or `internal/cluster` — enforced by a compile-time AST import linter (`imports_test.go`), not a code-review convention (`I-015`, [ADR-008](docs/adr/008-ai-read-only.md)).
-- ⚡ **Fully asynchronous.** Runs **in-process** as a worker goroutine, not a separate service — a client request never waits on it, and a test that terminates the AI worker mid-chaos-scenario confirms zero effect on cluster operation.
-- 🧾 **Evidence-grounded, mechanically.** Every claim in an accepted `AIIncident` must resolve to a real `EventID` in the supplied telemetry window. `OBSERVATION` claims must satisfy both entity *and* semantic derivability against their cited events — a gap caught and closed during Phase 8's audit pass, where an entity-match-alone bypass would have let a hallucinated claim through. The validator, not the model, constructs the final `EvidenceRef` from the canonical event.
-- 🎯 **The LLM proposes the complete diagnosis** (`IncidentType`, `Severity`, `AffectedNodes`, `Confidence`), not just narrative text — because Phase 9's evaluation scores exactly those fields, and scoring them means the LLM has to actually produce them ([ADR-007](docs/adr/007-rules-llm-hybrid.md)).
-- 📊 **Honestly evaluated, against a live model.** 8 primary scenarios + 4 held-out anti-circularity variants + a 30-minute healthy-cluster control, scored via `--mode=recorded` fixtures — including live-captured Gemini responses — as the official, reproducible evaluation path. **0 of 12 live-LLM-backed scenarios rejected by the evidence validator so far**; the manual `SUPPORTED`/`UNSUPPORTED`/`UNCERTAIN` audit of the resulting `INFERENCE` claims is in progress (Phase 9).
-- 🚫 **Never autonomous.** `RecommendedActions` are labeled informational-only everywhere they're displayed — the AI layer suggests, it never acts.
-
-Full architecture, claim schema, and evaluation methodology in [`docs/ai-design.md`](docs/ai-design.md).
-
----
-
-## Testing Strategy
-
-A **five-level deterministic hierarchy**, because randomized election timeouts are correct in production but make naive tests flaky:
-
-| Level | What it is | What it catches |
-|---|---|---|
-| **1** | Unit tests, fake `Clock` + fake `Transport` | Pure logic bugs — no `time.Sleep`, ever |
-| **2** | Deterministic multi-node cluster via a single-threaded simulator | Cross-node sequencing bugs, without real-timing nondeterminism |
-| **3** | Fault-injection transport (drop/delay/partition), same simulator | Replication/recovery correctness under seed-reproducible adversarial conditions |
-| **4** | Real multi-process cluster, real gRPC, real scheduling | Genuine concurrency bugs — mutex races, deadlocks — Levels 1–3 cannot produce by construction |
-| **5** | Docker/OS-level chaos | Final-mile realism, 30-min fuzzer soak, real `SIGKILL` process-crash tests |
-
-**Explicit caveat:** passing every deterministic test proves protocol logic is correct under controlled event ordering — it does **not** prove the absence of races or deadlocks. That's exactly why Level 4 and `go test -race ./...` remain mandatory, not optional, at every phase.
-
-Standing requirements — **verified through Phase 8 so far** (see `PROGRESS.md` for the exact per-phase race-detector run log):
-- Safety properties are asserted as **hard invariants**; liveness properties are measured as bounded-time distributions (p50/p95/p99), never as fixed pass/fail thresholds.
-- A 30-minute seeded chaos fuzzer run is reported as *"zero observed invariant violations under this specific run"* — never oversold as a formal correctness proof.
-- `go test -race ./...` must be green after **every single phase**, not just at the end.
-
-Full test hierarchy, fixture rules, and required test lists in [`docs/testing.md`](docs/testing.md).
-
----
-
-## Key Design Decisions
-
-<details>
-<summary><b>All 9 ADRs, summarized</b> (click to expand — full rationale and rejected alternatives in <code>docs/adr/</code>)</summary>
-
-| ADR | Decision | Why |
-|---|---|---|
-| 001 | Go + gRPC + Protocol Buffers | Typed RPC contracts "for free"; the project's value is protocol correctness, not wire-format invention |
-| 002 | Raft implemented from scratch | The point is implementation-level understanding for interviews, not the fastest path to a working KV store |
-| 003 | Length-prefixed, checksummed WAL; stop-and-truncate recovery | Reliable torn-write detection without a segmented/compacting WAL |
-| 004 | Quorum-confirmed reads + new-leader no-op (not ReadIndex/lease) | Achieves the same correctness property using only mechanisms already in scope |
-| 005 | Two mutexes (Raft + StateMachine), fixed lock order | Avoids serializing `GET` behind all Raft bookkeeping, at the cost of a lock-ordering discipline |
-| 006 | Injectable `Clock`/`Transport` + 5-level test hierarchy | Deterministic, sub-millisecond, 100+-repeat election tests instead of flaky real-timer tests |
-| 007 | Rules-first, LLM-on-top hybrid diagnosis | Rules give a grounded floor; the LLM adds narrative richness on the same evidence substrate |
-| 008 | AI layer is strictly read-only | An AI hypothesis should never be trusted enough to act on autonomously in a consensus system |
-| 009 | UUID `RequestID`s (not `(ClientID, SeqNum)`) | Simpler client library, at the accepted cost of unbounded `RequestTable` growth |
-
-</details>
-
----
-
-## Project Status
-
-RaftKV is under active development. **[`PROGRESS.md`](PROGRESS.md) is the authoritative, continuously-updated, pass-by-pass record of what's actually built and verified** — the phase table below reflects the last known state and may lag behind it.
+## Phase status at a glance
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Foundation + Single-Node KV Store | ✅ Approved |
-| 1 | Leader Election + Heartbeats | ✅ Approved |
-| 2 | Replicated Log + Minimal Durable Log | ✅ Approved |
-| 3 | Commit, Apply, and Reads | ✅ Approved |
-| 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved |
-| 5 | Client Semantics + Replicated Dedup | ✅ Approved |
-| 6 | Chaos Testing Framework | ✅ Approved |
-| 7 | Observability | ✅ Approved |
-| 8 | Evidence-Grounded Incident Diagnosis | ✅ Approved |
-| 9 | AI Evaluation | 🔄 In progress |
-| 10 | Benchmarking, Hardening & Final Demo | ⏳ Not started |
-
-Across Phases 0–8: all 24 invariants (`I-001`–`I-024`) are implemented with a passing test, the full suite is verified with `go test -race ./...` after every phase with zero data races, and the chaos framework grew to **11 named deterministic scenarios** — beyond the 6 originally scoped — plus real subprocess `SIGKILL` crash-recovery tests. See `PROGRESS.md`'s invariant coverage tracker for the exhaustive per-invariant breakdown, and its per-phase checkpoint summaries for every audit finding and fix along the way.
+| 0 | Foundation + Single-Node KV Store | ✅ Approved — 2026-09-13 |
+| 1 | Leader Election + Heartbeats | ✅ Approved — 2026-09-13 |
+| 2 | Replicated Log + Minimal Durable Log | ✅ Approved — 2026-09-15 |
+| 3 | Commit, Apply, and Reads | ✅ Approved — 2026-09-16 |
+| 4 | Crash Recovery + Durable Metadata + WAL Hardening | ✅ Approved — 2026-09-16 |
+| 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
+| 6 | Chaos Testing Framework | ✅ Approved for next phase (2026-09-18) |
+| 7 | Observability | ✅ Approved for next phase (2026-09-19) |
+| 8 | Evidence-Grounded Incident Diagnosis | ✅ Approved for next phase (2026-09-20) |
+| **9** | **AI Evaluation** | **In progress** |
+| 10 | Benchmarking, Hardening & Final Demo | Not started |
 
 ---
 
-## Phase Roadmap
+## Completed Phases (checkpoint summaries)
 
-The phase sequence and each phase doc's scope/exit-criteria are **authoritative** — a day-by-day calendar is useful for personal planning but is never grounds for compressing a phase's scope (especially Phases 2–4, where the project's real correctness content lives). This table describes what each phase covers by design; see [Project Status](#project-status) above for current completion state.
+### Phase 0 — Foundation + Single-Node KV Store
+**Status:** Approved for next phase (2026-09-13)
+Single-node in-memory KV over gRPC; `StateMachine{Apply, Get}` interface seam established
+(`Get` deliberately not a Raft log command — the seam Phase 3 later wraps in linearizability).
+No Raft, no persistence yet.
 
-| Phase | Name | Focus |
-|---|---|---|
-| 0 | Foundation + Single-Node KV Store | Repo scaffold, in-memory KV over gRPC, no Raft yet |
-| 1 | Leader Election + Heartbeats | Roles, terms, durable `TermVoteStore` from day one |
-| 2 | Replicated Log + Minimal Durable Log | AppendEntries, conflict resolution, stale-response protection |
-| 3 | Commit, Apply, and Reads | **The correctness core** — commit rule, apply loop, full linearizable read protocol, new-leader no-op |
-| 4 | Crash Recovery + Durable Metadata + WAL Hardening | Full WAL corruption handling, crash-atomic term/vote storage |
-| 5 | Client Semantics + Replicated Dedup | Result semantics, replicated idempotency, canonical command hashing |
-| 6 | Chaos Testing Framework | Fault injection, 11 named deterministic scenarios (incl. real `SIGKILL` crash tests), 30-min randomized fuzzer |
-| 7 | Observability | Structured `ClusterEvent`/`MetricSnapshot` telemetry, live buffer + scenario recorder |
-| 8 | Evidence-Grounded Incident Diagnosis | Rule engine + LLM + evidence validator |
-| 9 | AI Evaluation | 8 primary + 4 held-out scenario ground-truth harness, honest multi-metric report |
-| 10 | Benchmarking, Hardening & Final Demo | Real measured numbers, soak test, 10 rehearsed live demos |
+### Phase 1 — Leader Election + Heartbeats + Minimal Durable Term/Vote
+**Status:** Approved for next phase (2026-09-13)
+Follower/Candidate/Leader roles, randomized election timeout, RequestVote with exact
+log-freshness formula, all four I-007 term-change touchpoints, minimal durable
+`TermVoteStore` (fsync-before-response, self-vote persisted before outgoing RequestVote).
+100+ repeated Level-2 deterministic elections, zero flakiness.
 
-Each phase has its own self-contained spec at `docs/phases/phase-NN.md`, listing exactly which invariant IDs it touches, which files it's allowed to change, and its exit criteria.
+### Phase 2 — Replicated Log + Minimal Durable Log
+**Status:** Approved for next phase (2026-09-15)
+`LogStore`/`FileLogStore`/`InMemoryLogStore`, fast-backtrack conflict resolution,
+at-most-one-in-flight AppendEntries per follower with attempt-ID staleness protection (I-021).
+**Pass 3/4 fix:** `peerInFlight` clearing was unconditional — a stale RPC from an older
+term could clear the in-flight flag of a fresh attempt. Keyed the clear to
+`role==Leader && term match && attempt match`.
+Verified: `go test`, `go test -race`, `go vet` all green (2026-09-15).
 
----
+### Phase 3 — Commit, Apply, and Reads
+**Status:** Approved for next phase (2026-09-16)
+Full 3-step linearizable read protocol (I-016: quorum confirm → barrier wait →
+term/role revalidation under StateMachine RLock), commit-index advancement with I-006
+current-term restriction, request-identity-aware `PendingWrite` lifecycle (I-019),
+new-leader NOOP commit + `readReadyTerm` gate (I-023), idempotent graceful shutdown.
+**Pass 3/4 fix:** `replication_convergence_test.go` expected `lastIndex` updated 3→4 to
+account for the Phase 3 NOOP entry now occupying index 1.
+Verified: `go test`, `go test -race`, `go vet` all green (2026-09-16).
 
-## Known Limitations (By Design)
+### Phase 4 — Crash Recovery + Durable Metadata + WAL Hardening
+**Status:** Approved for next phase (2026-09-16)
+`FileWAL` with CRC32 length-framing, torn-tail recovery, and 1 MiB oversized-record guard.
+`TermVoteStore` full replacement atomicity (temp-write → fsync → rename → dir-fsync,
+4-stage crash-point hooks). `FileLogStore` wrapping `FileWAL`. `Node.Recover()` recovery
+sequence (volatile commitIndex/lastApplied reset to 0; durable term/vote reload).
+**Pass 3/4 fix (I-011, safety-critical):** `FileLogStore.SetCommitIndex` was never called
+from the Raft layer — the committed-entry truncation guard sat permanently armed to `0`
+in production (zero runtime enforcement). Wired `SetCommitIndex` into all three Raft-layer
+sites: leader `tryAdvanceCommitIndexLocked` (`commit.go`), follower `leaderCommit` clamp
+(`replication.go`), and `Recover()` reset (`node.go`). New end-to-end test (Test 28)
+confirmed the pre-fix `"I-011 VIOLATION"` failure and post-fix pass.
+**Pass 3/4 fix (recovery.go, minor):** `ReconstructLog` discarded `wal.TruncateAt` error
+with `_ = ...`; replaced with proper error propagation. Test 29 confirms.
+Also fixed pre-Pass-3 (on developer instruction): `server.Get` I-016 violation — error
+path now returns `STATUS_NOT_LEADER` instead of falling back to `s.sm.Get()`.
+Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...`
+green, zero DATA RACE reports (2026-09-16). Tests 1–29, all packages.
 
-Stated explicitly rather than discovered later — every one of these is a documented, deliberate MVP scope boundary, not an oversight:
+> **Note on commit history:** The Phase 4 Pass 4 fix (I-011 `SetCommitIndex` wiring, Tests 28–29, `recovery.go` `TruncateAt` error surfacing) was validated during the 2026-09-16 session, but was committed on 2026-09-17 during Phase 5 preparation, extracted into standalone commit `be2eb9e` for bisectability and honest chronology.
 
-- **No snapshotting.** Recovery time is `O(committed log length)`. The design is fully documented (`docs/architecture.md`'s Snapshot Design) but intentionally not implemented in the Phase 0–10 MVP.
-- **`RequestTable` grows unboundedly.** A consequence of UUID-based `RequestID`s ([ADR-009](docs/adr/009-request-identity-model.md)); bounded retention via snapshotting or session-based identity is future work.
-- **No ReadIndex or leader-lease reads.** Quorum-confirmed reads via a new-leader no-op commit achieve the same guarantee using only mechanisms already in scope ([ADR-004](docs/adr/004-read-consistency.md)).
-- **No cluster membership changes, sharding, multi-Raft, or transactions.** Explicitly flagged in `AGENTS.md`'s do-not-overbuild list — each is individually impressive-sounding, which is exactly why it's excluded from this project's actual differentiator.
-- **No Byzantine fault tolerance, no clock-sync assumptions.** Out of scope by `docs/failure-model.md`.
-- **A 30-minute chaos soak is not a correctness proof.** It's reported as *"zero observed invariant violations in this specific run"* — a finite randomized test demonstrates absence of observed violations, not a formal guarantee.
+### Phase 5 — Client Semantics + Replicated Dedup
+**Status:** Approved for next phase (2026-09-17)
+Replicated request-table deduplication in `KVStateMachine` keyed by `RequestID` with `PayloadHash` (`SHA-256` of frozen canonical command encoding, excluding `RequestID`).
+Application-error semantics verified: `ErrRequestIDReused` (I-017) advances `lastApplied` without Raft rollback (I-005, Test 33). Full client-facing error mapping (`STATUS_NOT_LEADER` with `leaderHint`, `STATUS_TIMEOUT`, `STATUS_INVALID_REQUEST`, `STATUS_REQUEST_ID_REUSED`, Tests 37–40) and `ClusterStatus` dynamic status RPC.
+Level-4 crash tests: commit-before-ack-crash exactly-once (Test 35) and rolling-leader-kill write survival (Test 36) with robust leader-polling test harness.
+**Pass 2 rework / Pass 3 fix (I-016):** `ctx.Err()` enforcement at entry of `LinearizableGet` and `confirmLeadershipQuorum` ensuring timeout errors on single-node or instant-quorum reads (Test 41).
+Verified: `go vet` clean; `go test -count=1 ./...` green; `go test -race -count=1 ./...` green across all 41 tests (2026-09-17).
 
----
+### Phase 6 — Chaos Testing Framework
+**Status:** Approved for next phase (2026-09-18)
+Built fault-injection at Levels 3–5 (`docs/testing.md`) with 11 named deterministic chaos scenarios, `FaultTransport` supporting 5 discrete calibrated regimes (CleanSlow, TimeoutSlow, FullPartition, LightDrop, NodeChurn) with quorum-safety guard, 5-point post-heal state convergence engine (quiescence barrier, CommitIndex/LastApplied equality, entry-by-entry prefix comparison, KV state snapshot equality, RequestTable equality), and randomized `Fuzzer` with periodic quiescent intervals.
+Real ungraceful crash tests (Tests 51 and 52) run on `ProcessCluster` using real subprocesses and `SIGKILL`, proving rolling crash survival (I-024) and fail-closed corrupt startup with on-disk state repair (I-020). Concurrent network I/O probe verified I-014.
+**Pass 3/4 fixes:** Async-dispatch scoped to finite delay with `delayedCancel` in `HealAll()`; `IssueSyncWrite` refactored to wait strictly on `PendingWrite.Done`; `FindLeader` and `WaitForLeader` updated to track live leader by term; dynamic final leader commit snapshot in `AssertConvergence`; synchronous barrier write in periodic quiescence; semantic polling for stable read-ready cluster leader post-heal; stopped node RPC isolation.
+**Post-approval fix (2026-09-19):** In `internal/chaos/scenarios.go`, hardened `findProcessLeader` to utilize `LeaderHint` returned by follower nodes instead of blind round-robin polling; updated `issueProcessSyncWrite` to record `lastErr` when leader discovery fails; increased write and convergence timeouts in `RunScenarioRollingCrash` from 7s/8s to 10s/12s to accommodate OS process spawn and SIGKILL latency overhead under `-race`. This eliminated pre-existing intermittent timeout flakiness in `TestScenarioRollingCrash_10x` under `-race` (unrelated to Phase 7 instrumentation).
+Verified: `go vet` clean; `go test -race ./...` green across all 52 tests in repo (2026-09-18).
 
-## Repository Layout
-
-```
-.
-├── cmd/
-│   ├── raftkv-node/          gRPC server entrypoint for a single cluster node
-│   ├── raftkv-cli/           client CLI — get / set / delete / cluster status
-│   └── raftkv-chaos/         chaos-scenario and fuzzer runner
-├── internal/
-│   ├── raft/                 election, replication, commit/apply, read protocol
-│   ├── storage/               WAL, LogStore, TermVoteStore, KV state machine
-│   ├── cluster/                transport, cluster config
-│   ├── client/                 client-facing API, leader routing, retries
-│   ├── chaos/                  fault-injecting transport, named scenarios, fuzzer
-│   ├── observability/          ClusterEvent/MetricSnapshot emission, live buffer, scenario recorder
-│   └── ai/                     rule engine, LLM client, evidence validator, incident types
-├── proto/                     gRPC service + message definitions
-├── tests/
-│   ├── ai_eval/                Phase 9 evaluation harness, fixtures, recorded LLM responses
-│   └── bench/                   Phase 10 benchmark suite
-├── docs/
-│   ├── PRD.md                 product definition, architecture pointers, phase roadmap (authoritative)
-│   ├── architecture.md        system diagrams, write path, recovery path, WAL format, concurrency model
-│   ├── invariants.md          canonical invariant IDs (I-001..I-024)
-│   ├── failure-model.md       network/node failure assumptions, safety vs. liveness, failure matrix
-│   ├── client-semantics.md    result semantics, replicated idempotency/dedup design, read protocol
-│   ├── ai-design.md           evidence-grounded incident diagnosis: architecture, schema, evaluation
-│   ├── testing.md               5-level deterministic test hierarchy, testing pyramid
-│   ├── benchmarks.md            Phase 10 measured results
-│   ├── demos.md                  10 demo scenarios
-│   ├── interview-prep.md         question bank, cross-referenced against invariant IDs
-│   ├── phases/                    phase-00.md .. phase-10.md — one self-contained spec per phase
-│   └── adr/                        001–009 — architecture decision records
-├── AGENTS.md                  binding development rules for any implementation session, human or AI
-├── PROGRESS.md                 live, pass-by-pass status of every phase — source of truth for "what's done"
-└── README.md                   you are here
-```
-
----
-
-## Documentation Map
-
-| Document | Answers |
-|---|---|
-| [`docs/PRD.md`](docs/PRD.md) | What is this project, who is it for, what's the roadmap? |
-| [`AGENTS.md`](AGENTS.md) | What rules govern every commit — the five-pass workflow, phase discipline, source-of-truth hierarchy |
-| [`PROGRESS.md`](PROGRESS.md) | What's actually done right now, pass-by-pass — the up-to-date complement to this README's higher-level roadmap |
-| [`docs/architecture.md`](docs/architecture.md) | How is it actually built — wire protocol, WAL format, concurrency model, recovery path |
-| [`docs/invariants.md`](docs/invariants.md) | What must never be violated, and how each property is verified |
-| [`docs/failure-model.md`](docs/failure-model.md) | What failures are assumed, what's explicitly out of scope, safety vs. liveness |
-| [`docs/client-semantics.md`](docs/client-semantics.md) | What the client actually sees — result codes, idempotency, the read protocol |
-| [`docs/ai-design.md`](docs/ai-design.md) | How the AI layer reasons, and why it can be trusted not to hallucinate silently |
-| [`docs/testing.md`](docs/testing.md) | How correctness is actually verified, level by level |
-| [`docs/adr/`](docs/adr/) | Why each major decision was made, and what alternatives were rejected |
-| [`docs/interview-prep.md`](docs/interview-prep.md) | Question bank mapped to invariant IDs |
-
-### Source-of-truth hierarchy
-
-When two documents disagree, `AGENTS.md` resolves it in this fixed order:
-
-```
-1. AGENTS.md                 — implementation constraints
-2. docs/invariants.md        — safety invariants (canonical IDs)
-3. docs/phases/phase-NN.md   — current-phase scope
-4. docs/architecture.md      — architecture / wire protocol / data structures
-5. docs/client-semantics.md  — client contract
-6. docs/failure-model.md     — failure assumptions
-7. docs/ai-design.md         — AI contract
-8. docs/adr/*.md              — rationale / history (informative, not binding)
-```
-
-A disagreement between two documents is treated as a **documentation bug**, never a judgment call to resolve silently.
+### Phase 7 — Observability
+**Status:** Approved for next phase (2026-09-19)
+Turned chaos into structured, machine-readable telemetry per the exact `ClusterEvent`/`MetricSnapshot` schema and 14-transition matrix in `docs/architecture.md`. Implemented one-way `EventSink` interface boundary (I-015), `BootID`-gated startup persistence (I-020), atomic lock-free `Histogram` with percentiles, and Prometheus `/metrics` exporter (Rule 32). Created bounded lossy `LiveBuffer` (10k events) and lossless `ScenarioRecorder` generating replayable JSON fixtures.
+**Pass 3/4 fixes:** Defect #1: `election_duration` histogram wired for `outcome="abandoned"` on higher-term step-down; Defect #2: Touchpoint 2b wired for `outcome="abandoned"` when candidate receives same-term `AppendEntries`.
+**Verification fixes (2026-09-19):** Fixed missing `LogStore.Close()` WAL file descriptor leak on `InProcessCluster.Stop()`; audited and migrated 8 test-harness synchronization sites in `internal/chaos/scenarios.go` from `WaitForLeader` to `waitForStableClusterLeader` (verifying `ReadReadyTerm == Term` gate) to eliminate latent leader election race.
+Verified: `go vet` clean; `go test -race -count=1 -timeout 300s ./...` green across all packages (2026-09-19).
 
 ---
 
-## Development Workflow
+## Current Phase (full detail)
 
-Every phase — human or AI-assisted — follows the same five-pass discipline defined in `AGENTS.md`:
+### Phase 8 — Evidence-Grounded Incident Diagnosis (Rules + LLM)
+**Status:** ✅ Approved for next phase (2026-09-20)
 
-```
-PASS 1 — DESIGN     read the docs, inspect existing code, explain the approach, list files to touch
-PASS 2 — IMPLEMENT  build only what Pass 1 approved
-PASS 3 — AUDIT      compare the implementation against every relevant invariant — no fixes yet
-PASS 4 — FIX        write a failing test for each issue found, then fix only those issues
-PASS 5 — VERIFY     go test ./...  &&  go test -race ./...  — report honestly, then STOP
-```
+**Goal:** Build the AI layer per `docs/ai-design.md`: deterministic rules first, optional LLM refinement on top, structurally read-only, fully asynchronous to the client path, with the validator (not the LLM) as the authority on evidence content.
 
-Development never proceeds to the next phase without explicit developer approval, and never implements anything from a future phase "while we're at it" — see `AGENTS.md`'s scope-discipline rules for the full do-not-overbuild list. `PROGRESS.md` is the running, pass-by-pass log this workflow produces for every phase completed so far, including every audit finding and its fix.
+**Invariants touched:**
+- `I-015` / Rule 23: Strict architectural boundary — `internal/ai` never imports `internal/raft`, `internal/storage`, or `internal/cluster`. Enforced by compile-time AST import linter (`imports_test.go`).
+- `I-014` / Rule 24: Structurally read-only and fully asynchronous — AI worker reads from `LiveBuffer.Snapshot()` and releases the buffer mutex before invoking diagnosis; zero mutex coupling or latency impact on consensus or client request path.
+- Rule 25: Evidence grounding — every accepted `AIIncident`'s evidence resolves to a real `EventID` in the supplied telemetry window, mechanically validated by the validator (never authored/asserted by the LLM).
+- Rule 26: `OBSERVATION` vs `INFERENCE` distinction strictly enforced; `OBSERVATION` claims require both entity and semantic match against cited events; anti-circularity rule guarantees failed observations are rejected and never silently reclassified as inferences.
+- Rule 27: Robust fail-open behavior — LLM unavailability, timeouts, parse errors, or validation rejections fall back to deterministic rule-engine incidents or nil with zero cluster impact.
 
----
+#### Pass 1 — Design ✅ (approved)
+- Designed enums and structs in `internal/ai/incident.go` (`IncidentType`, `Severity`, `Source`, `ClaimType`, `ConsistencyImpact`, `AIIncident`, `DiagnosisClaim`, `EvidenceRef`).
+- Designed `DeterministicRuleEngine` with 6 concrete rules matching Phase 9 evaluation parameters.
+- Designed `LLMClient` interface and `FakeLLM` mock supporting all 11 robustness table conditions.
+- Designed mechanical validator pipeline (`SanitizeTelemetry`, `CanonicalNodeBearingFields`, `CheckObservationDerivability`, `ValidateLLMResponse`, `CandidateToIncident`).
+- Designed AST import linter (`imports_test.go`) enforcing `I-015`.
 
-## Non-Goals
+#### Pass 2 — Implement ✅
+- Created `internal/ai/incident.go`: Enums, structs, `FormatIncident` with required notices (`ConfidenceNotice` and `RecommendedActionsNotice`).
+- Created `internal/ai/rules.go`: `DeterministicRuleEngine` with `ElectionStormRule` (≥5 rounds), `LeaderInstabilityRule` (thrash ≥3 changes/60s and single crash/re-election), `NetworkPartitionRule`, `NodeUnreachableRule` (≥3 consecutive RPC failures), `SlowFollowerRule` (≥30s lag), and `ReplicationLagRule` (<30s lag).
+- Created `internal/ai/llm_client.go`: `LLMClient` interface and `FakeLLM` mock.
+- Created `internal/ai/validator.go`: Mechanical validation pipeline with ingest sanitization, non-emptiness guards, enum checks, evidence resolution, observation derivability, and affected nodes grounding.
+- Created `internal/ai/worker.go`: `DiagnosticsEngine` and in-process `AIWorker`.
+- Created tests in `internal/ai/{imports,incident,rules,llm_client,validator,worker}_test.go`.
 
-- ❌ Not a production database — no sharding, no SQL, no secondary indexes
-- ❌ Not competing with etcd/TiKV on throughput
-- ❌ Not a chatbot over logs — the AI layer is a narrowly-scoped, evidence-bound diagnosis component
-- ❌ No cluster membership changes, transactions, leases, or ReadIndex in the MVP (all documented as deliberate future work)
-- ❌ No AI-driven autonomous remediation, ever — the AI layer cannot act, only suggest
+#### Pass 3 — Audit ✅
+- Traced `AIWorker` call path to `LiveBuffer.Snapshot()`, confirming `b.mu` is released before `Diagnose()` runs, proving consensus and the Raft mutex can never be blocked by AI diagnosis.
+- Confirmed `EventID` resolution is a strict hash-map lookup against the supplied telemetry window.
+- Verified AST linter enforces `I-015` compile-time import separation.
+- Identified Finding 1: `CheckObservationDerivability` had an OR-logic bypass where entity match alone accepted an observation claim without semantic verification.
+- Identified Finding 2: `SlowFollowerRule` and `ReplicationLagRule` metric evaluation fell back to `events[0].EventID` when no peer event was found, causing `AffectedNodes` evidence-binding rejection (fail-closed recall issue).
+- Identified Finding 3: `LeaderInstabilityRule` single-election branch fired on clean initial cluster bootstrap at term 1 without preceding instability indicators.
 
----
+#### Pass 4 — Fix ✅
+- **Finding 1 (`CheckObservationDerivability` OR-logic bypass)**:
+  - *Before*: `CheckObservationDerivability` returned `true` if `entityMatched || semanticMatched`. A claim asserting a hallucinated event ("power supply caught fire") citing a node passed derivability solely because the node ID was present.
+  - *After*: Changed condition in `validator.go` to require `entityMatched && semanticMatched`. Updated `ElectionStormRule` template to explicitly include participating nodes so rule-generated claims satisfy both entity and semantic matches. Added safe default tokenizing `e.Type` and inspecting `e.Fields` for unlisted event types. Added regression test `TestValidator_ObservationDerivability_EntityAloneDoesNotSatisfy`.
+- **Finding 2 (Ungrounded metric-lag fallback to `events[0]`)**:
+  - *Before*: In `SlowFollowerRule` and `ReplicationLagRule`, when replication lag was detected via `MetricSnapshot` but no event matched `peer`, code fell back to `evidenceIDs = append(evidenceIDs, events[0].EventID)`. If `events[0]` was emitted by an unrelated node, `ValidateLLMResponse` rejected the incident under the `AffectedNodes` grounding check.
+  - *After*: Removed the `events[0]` fallback in both rules. Only cite events that genuinely match `peer` in canonical node-bearing fields. If no supporting event exists, the rule returns `nil`. Added regression test `TestRules_MetricLag_DoesNotCiteUnrelatedEvent`.
+- **Finding 3 (`LeaderInstabilityRule` clean initial bootstrap election false positive)**:
+  - *Before*: `LeaderInstabilityRule` evaluated every `LeaderElected` event and fired `LOW` severity on single elections, falsely flagging clean initial cluster bootstrap at term 1 as an instability incident.
+  - *After*: Added `hasInstabilityIndicator` check in `rules.go` verifying the election is at `Term > 1` or preceded by `LEADER_STEPPED_DOWN`, `NODE_STOPPED`, or `TERM_ADVANCED`. Clean term-1 initial startup now returns `nil`. Added regression test `TestRules_InitialStartupElection_NotClassifiedAsInstability`.
 
-## Getting Started
+#### Pass 5 — Verify ✅
+- Revert-and-fail verification: Each of the three Pass 4 fixes was temporarily reverted in the working tree and its regression test executed, confirming that each test fails with the expected failure mode against pre-fix code (zero vacuous passes):
+  - Reverting Fix 1: `TestValidator_ObservationDerivability_EntityAloneDoesNotSatisfy` failed with `expected rejection: claim with entity match but semantic mismatch must fail derivability`.
+  - Reverting Fix 2: `TestRules_MetricLag_DoesNotCiteUnrelatedEvent` failed with `Finding 2 regression: rule cited unrelated event node-1/boot-1/00001 for peer node-2`.
+  - Reverting Fix 3: `TestRules_InitialStartupElection_NotClassifiedAsInstability` failed with `Finding 3 regression: clean initial startup at term 1 classified as instability`.
+- Full-suite race verification: 3 independent back-to-back invocations of `go test -race -count=1 -timeout 300s ./...` passed 100% green across all packages with zero data races. A 4th post-verification full-suite run confirmed the working tree remains clean.
+- Static analysis: `go vet ./...` clean (0 warnings, 0 errors).
+- All 6 exit criteria in `docs/phases/phase-08.md` verified.
 
-### Clone & Build
-
-```bash
-git clone <this-repo>
-cd raftkv
-go build ./...
-go vet ./...
-```
-
-### Run the Test Suite
-
-```bash
-go test ./...
-go test -race -count=1 -timeout 300s ./...
-```
-
-Every phase in this project is only marked complete once both commands are green with zero data races — see `PROGRESS.md` for the exact verification log per phase.
-
-### Run a Cluster
-
-- `cmd/raftkv-node/` — starts a single Raft node; see `docs/architecture.md` for the cluster config format
-- `cmd/raftkv-cli/` — client CLI for `get`/`set`/`delete` and cluster-status queries
-- `cmd/raftkv-chaos/` — chaos harness for named scenarios and the randomized fuzzer, e.g. an extended soak run via `raftkv-chaos -scenario=fuzzer -duration=30m`
-
-### Run the AI Evaluation Harness
-
-```bash
-make ai-eval --mode=recorded   # official, reproducible scored evaluation (fixtures + recorded LLM responses)
-make ai-eval --mode=rules      # deterministic rule-engine-only path, no LLM call at all
-```
-
-### If You're Picking Up Development
-
-1. Read `AGENTS.md` end to end — it's binding on every commit.
-2. Read `PROGRESS.md` to see exactly what's done, what's in progress, and every open question flagged so far.
-3. Follow the five-pass workflow in [Development Workflow](#development-workflow) for the current or next phase, and don't skip Pass 1's approval gate.
+> **Note on commit history:** The entire `internal/ai/` implementation (rule engine, mechanical validator, LLM client/worker, three Pass 4 audit fixes, and regression tests) was developed and verified across Passes 1–5 while uncommitted, and was committed as a single standalone commit (`af814ca`) at Pass 5 close on 2026-09-20 rather than incrementally alongside each pass.
 
 ---
 
-## License
+## Current Phase: Phase 9 — AI Evaluation
+**Status:** In progress
 
-No license has been specified yet. If you intend to share or open-source this repository, add an OSI-approved `LICENSE` file (MIT is a common, permissive default for portfolio projects like this one).
+**Goal:** Implement synthetic-incident evaluation harness per `docs/phases/phase-09.md` and `docs/ai-design.md`, scoring the AI diagnostic engine across 8 primary failure scenarios, 4 held-out anti-circularity scenarios, and a 30-minute healthy control, with recorded live LLM fixtures, distinct metric reporting, and manual INFERENCE claim audit.
+
+**Invariants touched:**
+- Rule 23 / `I-015`: Observability & AI boundary maintained.
+- Rule 25: Evidence grounding (100% accepted evidence validity).
+- Rule 26: `OBSERVATION` vs `INFERENCE` distinction strictly enforced.
+- Rule 27: Fail-open fallback behavior.
+
+#### Pass 1 — Design ✅ (approved)
+- Designed evaluation types (`EvalCase`, `EvalResult`, `EvalReport`, `ScenarioTelemetry`, `ScenarioAuditFile`).
+- Defined 8 primary failure scenarios matching `docs/ai-design.md`, 4 held-out variants (`held_out_leader_thrash_4node`, `held_out_asymmetric_partition_5node`, `held_out_slow_follower_45s`, `held_out_election_storm_7rounds`), and 30m healthy-cluster control.
+- Designed scoring metrics with distinct `SeverityCorrect`, 100% accepted evidence validity, latency per mode, and confidence calibration.
+- Designed manual 3-way rubric audit workflow for `INFERENCE` claims with `UNCERTAIN` claims excluded from the unsupported denominator.
+
+#### Pass 2 — Implement (in progress)
+- Core types, scenarios (8 primary + 4 held-out + healthy control), scoring pipeline, fixture loader, runner, and CLI implemented and committed (`8f63f96`, `40f76c7`).
+- Live-capture path (`GeminiLiveClient`) added and exercised: 12 real Gemini API calls made (8 primary + 4 held-out; healthy control excluded by design — no incident to diagnose). 0 scenarios rejected by validator; 9 scenarios OBSERVATION-only (16 claims, mechanically verified, nothing to audit); 3 scenarios produced 1 accepted INFERENCE claim each (3 total), pending manual classification.
+- Report formatting hardened: 0/0 division no longer renders as 0.00% (now N/A); sample size N added inline next to unsupported-claim-rate and uncertain-claim-fraction, with an explicit small-N caveat block.
+- Flagged for Phase 9 closeout open-questions log: `CheckObservationDerivability` matches entity+semantic tokens against the union of cited events rather than enforcing 1:1 claim-to-event cardinality, which could let a cross-event synthesis claim pass as OBSERVATION if it happens to contain matching keywords. Confirmed harmless in this evaluation set (Gemini correctly self-tagged the one synthesis claim as INFERENCE), but the mechanical check doesn't itself enforce that boundary. Worth a future audit pass.
+- Blocked on developer: manual SUPPORTED/UNSUPPORTED/UNCERTAIN classification of the 3 audit files, before the official `--mode=recorded` scored run can be produced.
 
 ---
 
-<p align="center"><i>Built to demonstrate that consensus correctness is provable in the small — not just claimed in a README.</i></p>
+## Upcoming Phases
+10. Benchmarking, Hardening & Final Demo
+
+---
+
+## Open questions / flagged gaps
+*(Running log — anything flagged instead of guessed, anything intentionally deferred,
+anything under-built on purpose per the "under-build and flag" rule.)*
+
+1. **[Phase 4 — unresolved]** 20-minute test hang, root cause unconfirmed. A `go test ./...`
+   invocation hung for 20+ minutes during Phase 4 Pass 2 integration; killed before a goroutine
+   stack dump could be captured — no direct evidence of cause. Not reproduced across 20×
+   uncached subprocess-restart tests + 5× race-instrumented full-suite runs. **Watch during
+   Phase 10 soak test** (continuous writes + chaos injection). If it recurs, send `SIGQUIT`
+   first (not `kill`) to capture a full goroutine stack dump. Standing rule: always pass
+   `-timeout` to every `go test` invocation.
+
+2. **[Phase 5 — OVERLOADED backpressure, intentionally deferred]** `STATUS_OVERLOADED`
+   requires a backpressure signal from the Raft layer (e.g. too many outstanding
+   `PendingWrites`). No such signal exists yet. Will return `STATUS_UNSPECIFIED` for this
+   case in Phase 5 with an explicit comment; proper backpressure is Phase 6+ scope.
+
+3. **[Phase 5 — RequestTable unbounded growth, stated MVP tradeoff]** `RequestTable` in
+   the replicated state machine grows indefinitely. Bounded retention/TTL is future work
+   (`docs/adr/009-request-identity-model.md`). Snapshotting alone does not shrink it.
+   Explicitly not a Phase 5 correctness issue — a resource/scalability concern.
+
+4. **[Phase 4 — bug fixed pre-Pass-3, on developer instruction]** `server.Get` previously
+   fell back to `s.sm.Get()` and returned `STATUS_SUCCESS` on `LinearizableGet` error —
+   an I-016 violation (exposed stale/unconfirmed state). Fixed: error path now returns
+   `STATUS_NOT_LEADER`. Regression-tested in `server_test.go`.
+
+5. **[Audit pattern — watch in future phases]** I-011's tracker "yes" entry was false: the
+   test called `SetCommitIndex` directly on an isolated store object, bypassing the Raft
+   layer — the guard mechanism worked in isolation but was never armed in production. Fixed
+   in Phase 4 Pass 4. **Rule going forward: before marking any invariant "yes," verify at
+   least one test exercises the property through the real Raft code path.** Other "yes"
+   entries resting solely on isolated storage-layer tests should be re-reviewed in Phase 6.
+
+6. **[Phase 5 — proto status codes resolved]** Four proto status codes
+   (`STATUS_REQUEST_ID_REUSED`, `STATUS_TIMEOUT`, `STATUS_NO_LEADER`, `STATUS_OVERLOADED`)
+   were verified to already exist in `proto/client.proto` and generated Go code; used as-is.
+
+7. **[Post-MVP flag — RequestTable snapshotting correctness gap]** Snapshotting does
+   not exist in Phase 7 and is explicitly out of scope for the MVP per `AGENTS.md` Rule 6
+   (Phases 8–10 cover incident diagnosis, AI eval, and benchmarking, respectively; none
+   introduce snapshotting). Therefore, this correctness gap is formally carried forward as
+   a Post-MVP requirement: whenever snapshotting is introduced to compact the log,
+   `RequestTable` must be included in the snapshot state and verified against I-017 so that
+   deduplication history for compacted entries is not lost upon restoring from a snapshot
+   plus truncated log tail.
+
+8. **[Phase 10 flag — RequestTable soak test memory tracking]** Noted in `docs/benchmarks.md`
+   methodology that the soak test's memory-growth check should track `RequestTable` size
+   specifically, since it's the one structure in the system designed to grow unbounded by MVP decision.
+
+9. **[Phase 10 flag — Production Write() commit-latency heartbeat floor]** In production
+   `Node.Write(ctx, cmd)`, local WAL append does not immediately dispatch `AppendEntries` to
+   followers; replication is driven by the leader's background heartbeat loop
+   (`HeartbeatInterval = 50ms`). This introduces a worst-case ~50ms latency floor on committed
+   client writes. Noted for Phase 10 commit-latency benchmarking; an immediate-dispatch
+   trigger on write can be benchmarked as an optimization in Phase 10.
+
+10. **[Phase 6 flag — Fuzzer Substrate & CI Duration Calibration]**
+    - **Substrate split**: The randomized fuzzer (`TestFuzzer_SeededRun` and `raftkv-chaos -scenario=fuzzer`) operates on `InProcessCluster` using `FaultTransport` to dynamically inject transport-level faults (drop rates, latency jitter, partition matrices) without external proxies. In this substrate, `NodeChurn` is simulated via `Node.Stop()` and transport unregistration, rather than OS `SIGKILL`. Real ungraceful crash recovery (Level 4/5 `ProcessCluster` with real `raftkv-node` subprocesses, `syscall.SIGKILL`, and on-disk recovery) is provided specifically by `TestScenarioRollingCrash_10x` (Test 51) and `TestScenarioProcessCrashRecovery_10x` (Test 52).
+    - **CI duration calibration**: `TestFuzzer_SeededRun` was intentionally calibrated to 8s active fault injection (~10.05s total wall-clock with cycle quiescence and convergence check) rather than Pass 1's preliminary 60s design estimate, keeping total repository CI runtime under ~2 minutes with race detection enabled while still validating all 5 fault regimes; long-running multi-minute and 30-minute soaks are driven via the standalone CLI (`raftkv-chaos -duration=30m`).
+
+---
+
+## Invariant coverage tracker
+*(Which of I-001..I-024 are implemented + which have a test that would fail if violated —
+two different things, tracked separately.)*
+
+| ID | Implemented in | Test exists | Notes |
+|---|---|---|---|
+| I-001 | 1 | yes | At-most-one-leader-per-term; 100× Level-2 election test. |
+| I-002 | 2 | yes | Leader append-only, never truncates. |
+| I-003 | 2 | yes | Log Matching via `prevLogIndex`/`prevLogTerm`; ≥6 diverging-log scenarios. |
+| I-004 | 1 | yes | Log-freshness formula incl. empty-log case. |
+| I-005 | 3 | yes | Only committed entries applied; applier respects `commitIndex`. |
+| I-006 | 3 | yes | Current-Term Commit Rule; Figure-8 scenario test. |
+| I-007 | 1 | yes | All four term-change touchpoints; higher-term response beats role/attempt filtering. |
+| I-008 | 3 | yes | Follower passively adopts `leaderCommit` clamped to `lastNewEntryIndex`. |
+| I-009 | 3 | yes | `lastApplied ≤ commitIndex` maintained monotonically. |
+| I-010 | 3 | yes | `commitIndex ≤ lastLogIndex` enforced. |
+| I-011 | 2, **4** | yes | Guard mechanism since Phase 2; **Phase 4 fix wired `SetCommitIndex` into all 3 Raft-layer sites (leader/follower/recovery) — was unarmed in production before.** End-to-end proof: Test 28. |
+| I-012 | 1 | yes | Save-before-grant and save-before-outgoing-RequestVote. |
+| I-013 | 2 | yes | Follower fsync before ACK; delayed-fsync test. |
+| I-014 | 1, **6** | yes | RPCs sent after releasing Raft mutex. Verified on real Raft nodes with concurrent mutex availability probes under 200ms delay: Test 50 (`ScenarioMutexNetworkIOSafety_10x`). |
+| I-015 | 7, **8** | yes | Strong AI/Raft architectural boundary. Phase 7: one-way `EventSink` interface. Phase 8: `internal/ai` AST import linter (`imports_test.go`) strictly enforcing zero imports of `internal/raft`, `internal/storage`, or `internal/cluster`; async non-blocking structural test (`worker_test.go`). |
+| I-016 | 3 | yes | Full 3-step linearizable read; regression-tested after Phase 4 `server.Get` fix. |
+| I-017 | **5** | yes | Canonical-hash dedup in replicated SM; `ErrRequestIDReused`; `lastApplied` still advances. Real Raft code-path proof: Test 33 (`dedup_test.go`, real Raft apply loop) and Tests 35–36 (Level 4 subprocess tests). Unit: Tests 30–32, 34. |
+| I-018 | 2 | yes | Fail-closed on durable write failure; disk-before-memory ordering. |
+| I-019 | 3 | yes | Request-identity-aware `PendingWrite` lifecycle. |
+| I-020 | 1, 4, **6** | yes | First-boot persist + full corruption-handling (Tests 10–15, 18–26); Level-4/5 `ProcessCluster` (real subprocesses, SIGKILL) multi-boot progression (1->2->3), corruption fail-closed, on-disk repair, and convergence: Test 52 (`ScenarioProcessCrashRecovery_10x`). |
+| I-021 | 2 | yes | Stale/out-of-order response triple-check (role/term/attempt). |
+| I-022 | 2, 3 | yes | `matchIndex[self]==lastLogIndex`; `commitIndex`/`lastApplied` monotonic. |
+| I-023 | 3 | yes | New-leader NOOP commit + `readReadyTerm` gate. |
+| I-024 | 1, 4, **6** | yes | Temp-file+rename replacement atomicity; 4-stage crash-point hooks (Phase 4); Level-4/5 `ProcessCluster` (real subprocesses, SIGKILL) sequential rolling crash & recovery under continuous writes with term/log preservation and cluster convergence: Test 51 (`ScenarioRollingCrash_10x`). |
