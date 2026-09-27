@@ -30,8 +30,8 @@ applies across all phases.
 | 5 | Client Semantics + Replicated Dedup | ✅ Approved — 2026-09-17 |
 | 6 | Chaos Testing Framework | ✅ Approved for next phase (2026-09-18) |
 | 7 | Observability | ✅ Approved for next phase (2026-09-19) |
-| **8** | **Evidence-Grounded Incident Diagnosis** | ✅ Approved for next phase (2026-09-20) |
-| 9 | AI Evaluation | Not started |
+| 8 | Evidence-Grounded Incident Diagnosis | ✅ Approved for next phase (2026-09-20) |
+| **9** | **AI Evaluation** | **In progress** |
 | 10 | Benchmarking, Hardening & Final Demo | Not started |
 
 ---
@@ -177,8 +177,33 @@ Verified: `go vet` clean; `go test -race -count=1 -timeout 300s ./...` green acr
 
 ---
 
+## Current Phase: Phase 9 — AI Evaluation
+**Status:** In progress
+
+**Goal:** Implement synthetic-incident evaluation harness per `docs/phases/phase-09.md` and `docs/ai-design.md`, scoring the AI diagnostic engine across 8 primary failure scenarios, 4 held-out anti-circularity scenarios, and a 30-minute healthy control, with recorded live LLM fixtures, distinct metric reporting, and manual INFERENCE claim audit.
+
+**Invariants touched:**
+- Rule 23 / `I-015`: Observability & AI boundary maintained.
+- Rule 25: Evidence grounding (100% accepted evidence validity).
+- Rule 26: `OBSERVATION` vs `INFERENCE` distinction strictly enforced.
+- Rule 27: Fail-open fallback behavior.
+
+#### Pass 1 — Design ✅ (approved)
+- Designed evaluation types (`EvalCase`, `EvalResult`, `EvalReport`, `ScenarioTelemetry`, `ScenarioAuditFile`).
+- Defined 8 primary failure scenarios matching `docs/ai-design.md`, 4 held-out variants (`held_out_leader_thrash_4node`, `held_out_asymmetric_partition_5node`, `held_out_slow_follower_45s`, `held_out_election_storm_7rounds`), and 30m healthy-cluster control.
+- Designed scoring metrics with distinct `SeverityCorrect`, 100% accepted evidence validity, latency per mode, and confidence calibration.
+- Designed manual 3-way rubric audit workflow for `INFERENCE` claims with `UNCERTAIN` claims excluded from the unsupported denominator.
+
+#### Pass 2 — Implement (in progress)
+- Core types, scenarios (8 primary + 4 held-out + healthy control), scoring pipeline, fixture loader, runner, and CLI implemented and committed (`8f63f96`, `40f76c7`).
+- Live-capture path (`GeminiLiveClient`) added and exercised: 12 real Gemini API calls made (8 primary + 4 held-out; healthy control excluded by design — no incident to diagnose). 0 scenarios rejected by validator; 9 scenarios OBSERVATION-only (16 claims, mechanically verified, nothing to audit); 3 scenarios produced 1 accepted INFERENCE claim each (3 total), pending manual classification.
+- Report formatting hardened: 0/0 division no longer renders as 0.00% (now N/A); sample size N added inline next to unsupported-claim-rate and uncertain-claim-fraction, with an explicit small-N caveat block.
+- Flagged for Phase 9 closeout open-questions log: `CheckObservationDerivability` matches entity+semantic tokens against the union of cited events rather than enforcing 1:1 claim-to-event cardinality, which could let a cross-event synthesis claim pass as OBSERVATION if it happens to contain matching keywords. Confirmed harmless in this evaluation set (Gemini correctly self-tagged the one synthesis claim as INFERENCE), but the mechanical check doesn't itself enforce that boundary. Worth a future audit pass.
+- Blocked on developer: manual SUPPORTED/UNSUPPORTED/UNCERTAIN classification of the 3 audit files, before the official `--mode=recorded` scored run can be produced.
+
+---
+
 ## Upcoming Phases
-9. AI Evaluation
 10. Benchmarking, Hardening & Final Demo
 
 ---
